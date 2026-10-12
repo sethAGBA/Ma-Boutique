@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as pth;
 import 'package:pdf/pdf.dart';
@@ -98,6 +99,12 @@ class TicketService {
     if (params.logoPath.isNotEmpty && File(params.logoPath).existsSync()) {
       try {
         logoBytes = await File(params.logoPath).readAsBytes();
+      } catch (_) {}
+    }
+    if (logoBytes == null) {
+      try {
+        final byteData = await rootBundle.load('assets/iconmaboutique.png');
+        logoBytes = byteData.buffer.asUint8List();
       } catch (_) {}
     }
 
@@ -432,6 +439,12 @@ class TicketService {
         logoBytes = await File(params.logoPath).readAsBytes();
       } catch (_) {}
     }
+    if (logoBytes == null) {
+      try {
+        final byteData = await rootBundle.load('assets/iconmaboutique.png');
+        logoBytes = byteData.buffer.asUint8List();
+      } catch (_) {}
+    }
 
     final pdf = pw.Document();
     final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
@@ -657,6 +670,172 @@ class TicketService {
     }
     sb.writeln(_propre(params.messageTicket));
     await Share.share(sb.toString(), subject: 'Relevé de compte - ${client.nom}');
+  }
+
+  /// Génère le rapport PDF complet de la Situation d'Inventaire (SI) et valorisation des stocks (format A4).
+  static Future<Uint8List> genererPdfSituationInventaire(
+    SituationInventaire si, {
+    ParametresBoutique? parametres,
+  }) async {
+    final params = parametres ?? await _recupererParametres();
+    Uint8List? logoBytes;
+    if (params.logoPath.isNotEmpty && File(params.logoPath).existsSync()) {
+      try {
+        logoBytes = await File(params.logoPath).readAsBytes();
+      } catch (_) {}
+    }
+    if (logoBytes == null) {
+      try {
+        final byteData = await rootBundle.load('assets/iconmaboutique.png');
+        logoBytes = byteData.buffer.asUint8List();
+      } catch (_) {}
+    }
+
+    final pdf = pw.Document();
+    final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(28),
+        build: (pw.Context ctx) => [
+          // En-tête
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(_propre(params.nomBoutique.toUpperCase()),
+                      style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(_propre(params.sousTitre), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+                  if (params.telephone.isNotEmpty)
+                    pw.Text('Tel: ${_propre(params.telephone)}', style: const pw.TextStyle(fontSize: 10)),
+                  if (params.adresse.isNotEmpty)
+                    pw.Text(_propre(params.adresse), style: const pw.TextStyle(fontSize: 10)),
+                ],
+              ),
+              if (logoBytes != null)
+                pw.Container(
+                  width: 50,
+                  height: 50,
+                  child: pw.Image(pw.MemoryImage(logoBytes), fit: pw.BoxFit.contain),
+                ),
+            ],
+          ),
+          pw.SizedBox(height: 12),
+          pw.Divider(thickness: 1, color: PdfColors.grey400),
+          pw.SizedBox(height: 8),
+
+          // Titre
+          pw.Center(
+            child: pw.Text('RAPPORT DE SITUATION D INVENTAIRE (SI)',
+                style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.blueGrey800)),
+          ),
+          pw.Center(
+            child: pw.Text('Date d arret : $dateStr',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600)),
+          ),
+          pw.SizedBox(height: 16),
+
+          // Synthèse Valorisation (4 blocs)
+          pw.Container(
+            padding: const pw.EdgeInsets.all(10),
+            decoration: const pw.BoxDecoration(
+              color: PdfColors.grey100,
+              borderRadius: pw.BorderRadius.all(pw.Radius.circular(6)),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+              children: [
+                pw.Column(children: [
+                  pw.Text('Articles physiques', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                  pw.Text('${si.totalArticles} (${si.nbReferences} refs)', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                ]),
+                pw.Column(children: [
+                  pw.Text('Valeur Prix d Achat', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                  pw.Text(fcfa(si.valeurAchat), style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.blue800)),
+                ]),
+                pw.Column(children: [
+                  pw.Text('Valeur Prix de Vente', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                  pw.Text(fcfa(si.valeurVente), style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.green800)),
+                ]),
+                pw.Column(children: [
+                  pw.Text('Marge Potentielle', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                  pw.Text(fcfa(si.margeTheorique), style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.teal800)),
+                ]),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 16),
+
+          // Tableau détaillé des articles
+          pw.TableHelper.fromTextArray(
+            headers: [
+              'Article',
+              'Categorie',
+              'Stock',
+              'P. Achat',
+              'P. Vente',
+              'Val. Achat',
+              'Val. Vente',
+              'Marge'
+            ],
+            data: si.produits.map((p) => [
+              _propre(p.nom),
+              _propre(p.categorie.isEmpty ? 'General' : p.categorie),
+              '${p.stock} ${p.unite}',
+              fcfa(p.prixAchat),
+              fcfa(p.prixVente),
+              fcfa(p.stock * p.prixAchat),
+              fcfa(p.stock * p.prixVente),
+              fcfa(p.stock * (p.prixVente - p.prixAchat)),
+            ]).toList(),
+            headerStyle: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.blueGrey700),
+            cellStyle: const pw.TextStyle(fontSize: 7.5),
+            cellAlignment: pw.Alignment.centerLeft,
+            cellAlignments: {
+              0: pw.Alignment.centerLeft,
+              1: pw.Alignment.centerLeft,
+              2: pw.Alignment.centerRight,
+              3: pw.Alignment.centerRight,
+              4: pw.Alignment.centerRight,
+              5: pw.Alignment.centerRight,
+              6: pw.Alignment.centerRight,
+              7: pw.Alignment.centerRight,
+            },
+          ),
+          pw.SizedBox(height: 16),
+          pw.Divider(color: PdfColors.grey300),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text('Document officiel genere automatiquement par Ma Boutique',
+                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey500)),
+          ),
+        ],
+      ),
+    );
+
+    return pdf.save();
+  }
+
+  /// Télécharge le rapport PDF de la Situation d'Inventaire avec sélecteur de dossier
+  static Future<void> telechargerPdfSituationInventaire(
+    BuildContext context,
+    SituationInventaire si,
+  ) async {
+    final pdfBytes = await genererPdfSituationInventaire(si);
+    final nomFichier = 'situation_inventaire_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.pdf';
+    if (context.mounted) {
+      await exporterFichierRobuste(
+        context: context,
+        nomFichier: nomFichier,
+        bytes: pdfBytes,
+        titreDialogue: 'Enregistrer la Situation d\'Inventaire (SI) PDF',
+      );
+    }
   }
 }
 

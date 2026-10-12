@@ -38,7 +38,7 @@ class _EcranConnexionPinState extends State<EcranConnexionPin> {
       _pin += c;
       _erreur = null;
     });
-    if (_pin.length == 4) {
+    if (_pin.length == 6) {
       _validerAutomatique();
     }
   }
@@ -65,7 +65,7 @@ class _EcranConnexionPinState extends State<EcranConnexionPin> {
   }
 
   Future<void> _soumettre() async {
-    if (_pin.length < 4 || _enCours) return;
+    if (_pin.length != 6 || _enCours) return;
     setState(() => _enCours = true);
 
     try {
@@ -123,26 +123,31 @@ class _EcranConnexionPinState extends State<EcranConnexionPin> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Logo de la boutique
+                      // Logo officiel de la boutique
                       Container(
-                        width: 64,
-                        height: 64,
+                        width: 72,
+                        height: 72,
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF15803D), Color(0xFF16A34A)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(18),
+                          borderRadius: BorderRadius.circular(20),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF15803D).withValues(alpha: 0.3),
-                              blurRadius: 12,
+                              color: Colors.black.withValues(alpha: 0.12),
+                              blurRadius: 14,
                               offset: const Offset(0, 4),
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 34),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: Image.asset(
+                            'assets/iconmaboutique.png',
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => Container(
+                              color: const Color(0xFF15803D),
+                              child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 36),
+                            ),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       const Text(
@@ -161,15 +166,15 @@ class _EcranConnexionPinState extends State<EcranConnexionPin> {
                       ),
                       const SizedBox(height: 24),
 
-                      // Indicateur visuel des points PIN
+                      // Indicateur visuel des points PIN (6 chiffres)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(4, (i) {
+                        children: List.generate(6, (i) {
                           final rempli = i < _pin.length;
                           return Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 8),
-                            width: 18,
-                            height: 18,
+                            margin: const EdgeInsets.symmetric(horizontal: 6),
+                            width: 16,
+                            height: 16,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: rempli ? const Color(0xFF15803D) : const Color(0xFFE2E8F0),
@@ -232,7 +237,7 @@ class _EcranConnexionPinState extends State<EcranConnexionPin> {
                         width: double.infinity,
                         height: 50,
                         child: FilledButton.icon(
-                          onPressed: _pin.length >= 4 && !_enCours ? _soumettre : null,
+                          onPressed: _pin.length == 6 && !_enCours ? _soumettre : null,
                           icon: _enCours
                               ? const SizedBox(
                                   width: 18,
@@ -262,7 +267,7 @@ class _EcranConnexionPinState extends State<EcranConnexionPin> {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              'Gérant : 1234  •  Caissier : 0000',
+                              'Gérant : 123456  •  Caissier : 000000',
                               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF16A34A)),
                             ),
                           ],

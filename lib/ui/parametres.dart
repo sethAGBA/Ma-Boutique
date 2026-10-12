@@ -8,7 +8,9 @@ import 'package:provider/provider.dart';
 
 import '../data/models.dart';
 import '../data/repo.dart';
+import '../services/license_service.dart';
 import 'helpers.dart';
+import 'license_page.dart';
 
 class ParametresPage extends StatefulWidget {
   const ParametresPage({super.key});
@@ -125,7 +127,7 @@ class _ParametresPageState extends State<ParametresPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Définissez un nouveau code secret à 4 chiffres ou plus pour ${user.nom}.'),
+            Text('Définissez un nouveau code secret à 6 chiffres pour ${user.nom}.'),
             const SizedBox(height: 16),
             TextField(
               controller: codeCtrl,
@@ -134,8 +136,8 @@ class _ParametresPageState extends State<ParametresPage> {
               obscureText: true,
               maxLength: 6,
               decoration: const InputDecoration(
-                labelText: 'Nouveau code PIN',
-                hintText: 'Ex: 1234',
+                labelText: 'Nouveau code PIN (6 chiffres)',
+                hintText: 'Ex: 123456',
                 prefixIcon: Icon(Icons.password_rounded),
               ),
             ),
@@ -148,11 +150,11 @@ class _ParametresPageState extends State<ParametresPage> {
       ),
     );
 
-    if (ok == true && codeCtrl.text.trim().length >= 4 && mounted) {
+    if (ok == true && codeCtrl.text.trim().length == 6 && mounted) {
       await context.read<Repo>().changerPin(user.id, codeCtrl.text.trim());
       if (mounted) message(context, '✓ Code PIN de ${user.nom} mis à jour avec succès');
     } else if (ok == true && mounted) {
-      message(context, 'Le code PIN doit comporter au moins 4 chiffres', erreur: true);
+      message(context, 'Le code PIN doit comporter exactement 6 chiffres', erreur: true);
     }
   }
 
@@ -293,21 +295,36 @@ class _ParametresPageState extends State<ParametresPage> {
                                           borderRadius: BorderRadius.circular(11),
                                           child: Image.file(File(_logoPath), fit: BoxFit.contain),
                                         )
-                                      : const Icon(Icons.add_photo_alternate_outlined, size: 32, color: Color(0xFF94A3B8)),
+                                      : ClipRRect(
+                                          borderRadius: BorderRadius.circular(11),
+                                          child: Image.asset(
+                                            'assets/iconmaboutique.png',
+                                            fit: BoxFit.contain,
+                                            errorBuilder: (_, _, _) => const Icon(
+                                              Icons.storefront_rounded,
+                                              size: 32,
+                                              color: Color(0xFF15803D),
+                                            ),
+                                          ),
+                                        ),
                                 ),
                                 const SizedBox(width: 16),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      const Text(
-                                        'Logo personnalisé de la boutique',
-                                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                                      Text(
+                                        _logoPath.isNotEmpty
+                                            ? 'Logo personnalisé actif'
+                                            : 'Logo officiel « Ma Boutique » (Par défaut)',
+                                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                                       ),
                                       const SizedBox(height: 2),
-                                      const Text(
-                                        'Formats acceptés : PNG, JPG • Imprimé automatiquement en haut des tickets et clôtures',
-                                        style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                      Text(
+                                        _logoPath.isNotEmpty
+                                            ? 'Ce logo personnalisé est imprimé en haut de vos tickets et clôtures de caisse.'
+                                            : 'Ce logo officiel figure automatiquement sur tous vos reçus et clôtures de caisse.',
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
                                       ),
                                       const SizedBox(height: 8),
                                       Wrap(
@@ -316,13 +333,13 @@ class _ParametresPageState extends State<ParametresPage> {
                                           FilledButton.tonalIcon(
                                             onPressed: _choisirLogo,
                                             icon: const Icon(Icons.upload_file_rounded, size: 16),
-                                            label: Text(_logoPath.isNotEmpty ? 'Changer de logo' : 'Choisir un logo (PNG, JPG)'),
+                                            label: Text(_logoPath.isNotEmpty ? 'Remplacer le logo' : 'Choisir un autre logo'),
                                           ),
                                           if (_logoPath.isNotEmpty)
                                             OutlinedButton.icon(
                                               onPressed: _supprimerLogo,
-                                              icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFDC2626)),
-                                              label: const Text('Supprimer', style: TextStyle(color: Color(0xFFDC2626))),
+                                              icon: const Icon(Icons.restore_rounded, size: 16, color: Color(0xFF15803D)),
+                                              label: const Text('Rétablir logo officiel', style: TextStyle(color: Color(0xFF15803D))),
                                             ),
                                         ],
                                       ),
@@ -495,7 +512,7 @@ class _ParametresPageState extends State<ParametresPage> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  'Codes PIN par défaut : Gérant = 1234  •  Caissier = 0000. '
+                                  'Codes PIN par défaut : Gérant = 123456  •  Caissier = 000000. '
                                   'Pensez à les personnaliser pour protéger les marges bénéficiaires.',
                                   style: TextStyle(fontSize: 12, color: Color(0xFF475569)),
                                 ),
@@ -602,6 +619,87 @@ class _ParametresPageState extends State<ParametresPage> {
                       ],
                     ),
                   ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // 5. Gestion de la Licence Logicielle
+                FutureBuilder<LicenseStatus>(
+                  future: LicenseService.instance.getStatus(),
+                  builder: (context, snap) {
+                    final st = snap.data;
+                    final isActive = st?.isActive ?? false;
+                    final isExpired = st?.isExpired ?? false;
+                    final isLifetime = st?.isLifetime ?? false;
+                    final days = st?.daysRemaining ?? 0;
+
+                    final Color statusColor = isActive
+                        ? const Color(0xFF16A34A)
+                        : (isExpired ? const Color(0xFFDC2626) : const Color(0xFFEA580C));
+
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    isActive ? Icons.verified_rounded : Icons.vpn_key_rounded,
+                                    color: statusColor,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Licence Commerciale du Logiciel',
+                                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                                      ),
+                                      Text(
+                                        isActive
+                                            ? (st?.hasKey == true
+                                                ? (isLifetime ? 'Licence à vie active' : 'Licence commerciale active ($days jour(s) restants)')
+                                                : 'Essai gratuit : $days jour(s) restant(s) sur 14')
+                                            : (st?.hasKey == true
+                                                ? 'Licence expirée — renouvellement requis'
+                                                : 'Période d’essai de 14 jours terminée'),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: statusColor,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                FilledButton.tonalIcon(
+                                  onPressed: () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => const EcranLicence()),
+                                    );
+                                    setState(() {});
+                                  },
+                                  icon: const Icon(Icons.manage_accounts_rounded, size: 18),
+                                  label: const Text('Gérer la licence'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),

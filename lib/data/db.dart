@@ -36,6 +36,13 @@ class AppDb {
       },
       onCreate: _create,
       onUpgrade: _upgrade,
+      onOpen: (d) async {
+        // Migration automatique des PINs par défaut 4 chiffres vers 6 chiffres
+        try {
+          await d.rawUpdate("UPDATE utilisateurs SET pin = '123456' WHERE pin = '1234' AND role = 'gerant'");
+          await d.rawUpdate("UPDATE utilisateurs SET pin = '000000' WHERE pin = '0000' AND role = 'caissier'");
+        } catch (_) {}
+      },
     );
   }
 
@@ -116,9 +123,9 @@ class AppDb {
         valeur TEXT NOT NULL
       )''');
 
-    // Utilisateurs par défaut
-    await d.insert('utilisateurs', {'nom': 'Gérant', 'role': 'gerant', 'pin': '1234', 'actif': 1});
-    await d.insert('utilisateurs', {'nom': 'Caissier', 'role': 'caissier', 'pin': '0000', 'actif': 1});
+    // Utilisateurs par défaut (codes PIN à 6 chiffres)
+    await d.insert('utilisateurs', {'nom': 'Gérant', 'role': 'gerant', 'pin': '123456', 'actif': 1});
+    await d.insert('utilisateurs', {'nom': 'Caissier', 'role': 'caissier', 'pin': '000000', 'actif': 1});
 
     // Paramètres par défaut
     await d.insert('parametres', {'cle': 'nom_boutique', 'valeur': 'Alimentation Générale'});
@@ -160,8 +167,8 @@ class AppDb {
       final countRes = await d.rawQuery('SELECT COUNT(*) as c FROM utilisateurs');
       final nbUsers = (countRes.first['c'] as int?) ?? 0;
       if (nbUsers == 0) {
-        await d.insert('utilisateurs', {'nom': 'Gérant', 'role': 'gerant', 'pin': '1234', 'actif': 1});
-        await d.insert('utilisateurs', {'nom': 'Caissier', 'role': 'caissier', 'pin': '0000', 'actif': 1});
+        await d.insert('utilisateurs', {'nom': 'Gérant', 'role': 'gerant', 'pin': '123456', 'actif': 1});
+        await d.insert('utilisateurs', {'nom': 'Caissier', 'role': 'caissier', 'pin': '000000', 'actif': 1});
       }
 
       // Vérifier et insérer les paramètres par défaut

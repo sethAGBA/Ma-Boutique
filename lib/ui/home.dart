@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/repo.dart';
+import '../services/license_service.dart';
 import 'caisse.dart';
 import 'clients.dart';
+import 'license_page.dart';
 import 'parametres.dart';
 import 'produits.dart';
 import 'rapports.dart';
@@ -34,25 +36,150 @@ class _HomePageState extends State<HomePage> {
     ('Paramètres', Icons.settings_rounded),
   ];
 
+  LicenseStatus? _licenseStatus;
+  bool _allLicensesConsumed = false;
+
   @override
   void initState() {
     super.initState();
+    _chargerLicence();
+    LicenseService.instance.activeNotifier.addListener(_chargerLicence);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final repo = context.read<Repo>();
       await repo.initialiserApplication();
     });
   }
 
+  @override
+  void dispose() {
+    LicenseService.instance.activeNotifier.removeListener(_chargerLicence);
+    super.dispose();
+  }
+
+  Future<void> _chargerLicence() async {
+    final st = await LicenseService.instance.getStatus();
+    final all = await LicenseService.instance.allKeysUsed();
+    if (mounted) {
+      setState(() {
+        _licenseStatus = st;
+        _allLicensesConsumed = all;
+      });
+    }
+  }
+
   void _verrouillerSession() {
     context.read<Repo>().deconnecter();
+  }
+
+  Widget? _buildLicenseBanner() {
+    if (_allLicensesConsumed) return null;
+    final st = _licenseStatus;
+    if (st == null) return null;
+
+    if (st.isTrial && st.isActive) {
+      return Container(
+        color: const Color(0xFF1D4ED8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.hourglass_top_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Version d’essai gratuite : il vous reste ${st.daysRemaining} jour(s) d’utilisation sur 14.',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFF1D4ED8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              ),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EcranLicence())),
+              child: const Text('Activer la licence', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (st.isExpired) {
+      return Container(
+        color: const Color(0xFFDC2626),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.lock_clock_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                st.isTrial
+                    ? 'Période d’essai de 14 jours terminée. Veuillez activer une clé de licence commerciale.'
+                    : 'Votre licence logicielle est expirée. Veuillez activer une nouvelle clé.',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFFDC2626),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              ),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EcranLicence())),
+              child: const Text('Activer la licence', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!st.isLifetime && st.daysRemaining <= 14) {
+      return Container(
+        color: const Color(0xFFD97706),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.hourglass_bottom_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Votre licence commerciale expire dans ${st.daysRemaining} jour(s). Pensez à renouveler votre clé.',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFFD97706),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              ),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EcranLicence())),
+              child: const Text('Gérer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
     final large = MediaQuery.sizeOf(context).width >= 850;
-    final body = IndexedStack(index: _i, children: _pages);
     final repo = context.watch<Repo>();
     final userActif = repo.utilisateurActif;
+    final bool estGerant = userActif?.estGerant == true;
+
+    // Le caissier ne doit pas voir les Rapports ni les Paramètres
+    final List<(String, IconData)> destinationsActives = estGerant
+        ? _destinations
+        : _destinations.sublist(0, 3);
+
+    // Ajustement de l'index si la page active n'est pas autorisée
+    final currentIndex = _i < destinationsActives.length ? _i : 0;
+    final body = IndexedStack(index: currentIndex, children: _pages);
 
     if (large) {
       final theme = Theme.of(context);
@@ -69,16 +196,35 @@ class _HomePageState extends State<HomePage> {
                 children: [
                   const SizedBox(height: 16),
                   Container(
-                    width: 48,
-                    height: 48,
+                    width: 52,
+                    height: 52,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
-                    child: Icon(
-                      Icons.storefront_rounded,
-                      color: theme.colorScheme.primary,
-                      size: 26,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.asset(
+                        'assets/iconmaboutique.png',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Container(
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            Icons.storefront_rounded,
+                            color: theme.colorScheme.primary,
+                            size: 26,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -96,7 +242,7 @@ class _HomePageState extends State<HomePage> {
                   const Divider(indent: 16, endIndent: 16),
                   Expanded(
                     child: NavigationRail(
-                      selectedIndex: _i,
+                      selectedIndex: currentIndex,
                       onDestinationSelected: (i) => setState(() => _i = i),
                       labelType: NavigationRailLabelType.all,
                       backgroundColor: Colors.transparent,
@@ -113,7 +259,7 @@ class _HomePageState extends State<HomePage> {
                         fontSize: 12,
                       ),
                       destinations: [
-                        for (final d in _destinations)
+                        for (final d in destinationsActives)
                           NavigationRailDestination(
                             icon: Icon(d.$2),
                             label: Text(d.$1),
@@ -161,22 +307,34 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-            Expanded(child: body),
+            Expanded(
+              child: Column(
+                children: [
+                  if (_buildLicenseBanner() != null) _buildLicenseBanner()!,
+                  Expanded(child: body),
+                ],
+              ),
+            ),
           ],
         ),
       );
     }
 
     return Scaffold(
-      body: body,
+      body: Column(
+        children: [
+          if (_buildLicenseBanner() != null) _buildLicenseBanner()!,
+          Expanded(child: body),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _i,
+        selectedIndex: currentIndex,
         onDestinationSelected: (i) => setState(() => _i = i),
         backgroundColor: Colors.white,
         elevation: 2,
         indicatorColor: Theme.of(context).colorScheme.primaryContainer,
         destinations: [
-          for (final d in _destinations)
+          for (final d in destinationsActives)
             NavigationDestination(
               icon: Icon(d.$2),
               label: d.$1,

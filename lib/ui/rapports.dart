@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -11,10 +12,20 @@ import '../data/repo.dart';
 import 'helpers.dart';
 import 'ticket_service.dart';
 
-class RapportsPage extends StatelessWidget {
+enum OngletRapport { activite, inventaire, statistiques }
+
+class RapportsPage extends StatefulWidget {
   const RapportsPage({super.key});
 
-  Future<(RapportJour, int, List<Produit>, List<Vente>)> _charger(Repo repo) async {
+  @override
+  State<RapportsPage> createState() => _RapportsPageState();
+}
+
+class _RapportsPageState extends State<RapportsPage> {
+  OngletRapport _onglet = OngletRapport.activite;
+  String _filtreSi = '';
+
+  Future<(RapportJour, int, List<Produit>, List<Vente>)> _chargerActivite(Repo repo) async {
     final r = await repo.rapportDuJour();
     final c = await repo.totalCredits();
     final a = await repo.produitsEnAlerte();
@@ -58,7 +69,6 @@ class RapportsPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Encadré Total Encaissé
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
@@ -89,8 +99,6 @@ class RapportsPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 14),
-
-                // Détails des chiffres
                 _ligneBilan('Chiffre d’affaires ventes', fcfa(cloture.totalVentes), bold: true),
                 _ligneBilan('Nombre de ventes', '${cloture.nbVentes}'),
                 _ligneBilan('Bénéfice estimé (marge)', fcfa(cloture.benefice), color: const Color(0xFF0F766E)),
@@ -103,27 +111,17 @@ class RapportsPage extends StatelessWidget {
           ),
         ),
         actions: [
-          Wrap(
-            alignment: WrapAlignment.end,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => TicketService.imprimerCloture(ctx, cloture),
-                icon: const Icon(Icons.print_rounded, size: 18),
-                label: const Text('Imprimer'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => TicketService.telechargerCloturePdf(ctx, cloture),
-                icon: const Icon(Icons.download_rounded, size: 18),
-                label: const Text('Télécharger PDF'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Fermer'),
-              ),
-            ],
+          OutlinedButton.icon(
+            onPressed: () => TicketService.imprimerCloture(ctx, cloture),
+            icon: const Icon(Icons.print_rounded, size: 18),
+            label: const Text('Imprimer (80mm)'),
           ),
+          OutlinedButton.icon(
+            onPressed: () => TicketService.telechargerCloturePdf(ctx, cloture),
+            icon: const Icon(Icons.download_rounded, size: 18),
+            label: const Text('Télécharger PDF'),
+          ),
+          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
         ],
       ),
     );
@@ -142,412 +140,823 @@ class RapportsPage extends StatelessWidget {
     );
   }
 
+  Future<void> _exporterSiCsv(BuildContext context, SituationInventaire si) async {
+    final sb = StringBuffer();
+    sb.writeln('Article;Categorie;Code-barres;Unite;Prix achat;Prix vente;Stock actuel;Valeur achat;Valeur vente;Marge potentielle');
+    for (final p in si.produits) {
+      final nom = p.nom.replaceAll(';', ',');
+      final cat = p.categorie.replaceAll(';', ',');
+      final code = p.codeBarres.replaceAll(';', ',');
+      final unite = p.unite.replaceAll(';', ',');
+      final valAchat = p.stock * p.prixAchat;
+      final valVente = p.stock * p.prixVente;
+      final marge = p.stock * (p.prixVente - p.prixAchat);
+      sb.writeln('$nom;$cat;$code;$unite;${p.prixAchat};${p.prixVente};${p.stock};$valAchat;$valVente;$marge');
+    }
+    final bytes = Uint8List.fromList(sb.toString().codeUnits);
+    final nomFichier = 'situation_inventaire_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.csv';
+    if (context.mounted) {
+      await exporterFichierRobuste(
+        context: context,
+        nomFichier: nomFichier,
+        bytes: bytes,
+        titreDialogue: 'Enregistrer la Situation d\'Inventaire CSV',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<Repo>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Rapports & Activité'),
+        title: const Text('Rapports & Statistiques'),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: FilledButton.tonalIcon(
               onPressed: () => _ouvrirCloture(context, repo),
               icon: const Icon(Icons.receipt_long_rounded, size: 18),
-              label: const Text('Clôture du jour'),
+              label: const Text('Clôture de Caisse (Z)'),
             ),
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(56),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8, left: 16, right: 16),
+            child: Center(
+              child: SegmentedButton<OngletRapport>(
+                segments: const [
+                  ButtonSegment(
+                    value: OngletRapport.activite,
+                    icon: Icon(Icons.today_rounded, size: 18),
+                    label: Text('Activité du jour'),
+                  ),
+                  ButtonSegment(
+                    value: OngletRapport.inventaire,
+                    icon: Icon(Icons.inventory_2_rounded, size: 18),
+                    label: Text('Situation d’Inventaire (SI)'),
+                  ),
+                  ButtonSegment(
+                    value: OngletRapport.statistiques,
+                    icon: Icon(Icons.analytics_rounded, size: 18),
+                    label: Text('Statistiques & Ventes'),
+                  ),
+                ],
+                selected: {_onglet},
+                onSelectionChanged: (val) => setState(() => _onglet = val.first),
+              ),
+            ),
+          ),
+        ),
       ),
-      body: FutureBuilder<(RapportJour, int, List<Produit>, List<Vente>)>(
-        future: _charger(repo),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final (r, credits, alertes, ventes) = snap.data!;
+      body: switch (_onglet) {
+        OngletRapport.activite => _buildVueActivite(context, repo),
+        OngletRapport.inventaire => _buildVueInventaire(context, repo),
+        OngletRapport.statistiques => _buildVueStatistiques(context, repo),
+      },
+    );
+  }
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // Ligne des Métriques Clés
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final isWide = constraints.maxWidth >= 700;
-                  if (isWide) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: _StatCard(
-                            titre: 'Ventes du jour',
-                            valeur: fcfa(r.total),
-                            detail: '${r.nbVentes} vente(s) enregistrée(s)',
-                            icon: Icons.payments_rounded,
-                            iconColor: const Color(0xFF16A34A),
-                            bgColor: const Color(0xFFF0FDF4),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _StatCard(
-                            titre: 'Bénéfice estimé',
-                            valeur: fcfa(r.benefice),
-                            detail: 'Prix de vente − Prix d’achat',
-                            icon: Icons.trending_up_rounded,
-                            iconColor: const Color(0xFF0F766E),
-                            bgColor: const Color(0xFFF0FDFA),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _StatCard(
-                            titre: 'Crédits à recouvrer',
-                            valeur: fcfa(credits),
-                            detail: 'Total dû par vos clients',
-                            icon: Icons.account_balance_wallet_rounded,
-                            iconColor: const Color(0xFFD97706),
-                            bgColor: const Color(0xFFFFFBEB),
-                          ),
-                        ),
-                      ],
-                    );
-                  }
+  // =========================================================================
+  // VUE 1 : ACTIVITÉ & CLÔTURE DU JOUR
+  // =========================================================================
+  Widget _buildVueActivite(BuildContext context, Repo repo) {
+    return FutureBuilder<(RapportJour, int, List<Produit>, List<Vente>)>(
+      future: _chargerActivite(repo),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final (r, credits, alertes, ventes) = snap.data!;
 
-                  return Column(
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Ligne des Métriques Clés
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 700;
+                final cards = [
+                  _StatCard(
+                    titre: 'Ventes du jour',
+                    valeur: fcfa(r.total),
+                    detail: '${r.nbVentes} vente(s) enregistrée(s)',
+                    icon: Icons.payments_rounded,
+                    iconColor: const Color(0xFF16A34A),
+                    bgColor: const Color(0xFFF0FDF4),
+                  ),
+                  _StatCard(
+                    titre: 'Bénéfice estimé',
+                    valeur: fcfa(r.benefice),
+                    detail: 'Prix de vente − Prix d’achat',
+                    icon: Icons.trending_up_rounded,
+                    iconColor: const Color(0xFF0F766E),
+                    bgColor: const Color(0xFFF0FDFA),
+                  ),
+                  _StatCard(
+                    titre: 'Crédits à recouvrer',
+                    valeur: fcfa(credits),
+                    detail: 'Total dû par vos clients',
+                    icon: Icons.account_balance_wallet_rounded,
+                    iconColor: const Color(0xFFD97706),
+                    bgColor: const Color(0xFFFFFBEB),
+                  ),
+                ];
+
+                if (isWide) {
+                  return Row(
                     children: [
-                      _StatCard(
-                        titre: 'Ventes du jour',
-                        valeur: fcfa(r.total),
-                        detail: '${r.nbVentes} vente(s) enregistrée(s)',
-                        icon: Icons.payments_rounded,
-                        iconColor: const Color(0xFF16A34A),
-                        bgColor: const Color(0xFFF0FDF4),
-                      ),
-                      const SizedBox(height: 10),
-                      _StatCard(
-                        titre: 'Bénéfice estimé',
-                        valeur: fcfa(r.benefice),
-                        detail: 'Prix de vente − Prix d’achat',
-                        icon: Icons.trending_up_rounded,
-                        iconColor: const Color(0xFF0F766E),
-                        bgColor: const Color(0xFFF0FDFA),
-                      ),
-                      const SizedBox(height: 10),
-                      _StatCard(
-                        titre: 'Crédits à recouvrer',
-                        valeur: fcfa(credits),
-                        detail: 'Total dû par vos clients',
-                        icon: Icons.account_balance_wallet_rounded,
-                        iconColor: const Color(0xFFD97706),
-                        bgColor: const Color(0xFFFFFBEB),
-                      ),
+                      for (int i = 0; i < cards.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 12),
+                        Expanded(child: cards[i]),
+                      ],
                     ],
                   );
-                },
-              ),
+                }
 
-              const SizedBox(height: 24),
+                return Column(
+                  children: [
+                    for (int i = 0; i < cards.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      cards[i],
+                    ],
+                  ],
+                );
+              },
+            ),
 
-              // Section Stocks en Alerte
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Stocks à surveiller',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-                  ),
-                  if (alertes.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        '${alertes.length} alerte(s)',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
-                      ),
+            const SizedBox(height: 24),
+
+            // Stocks en Alerte
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Stocks à surveiller',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                ),
+                if (alertes.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                ],
-              ),
-              const SizedBox(height: 8),
+                    child: Text(
+                      '${alertes.length} alerte(s)',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
 
-              if (alertes.isEmpty)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFDCFCE7),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 24),
+            if (alertes.isEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFDCFCE7),
+                          shape: BoxShape.circle,
                         ),
-                        const SizedBox(width: 14),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Tous les stocks sont au vert',
-                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                        child: const Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tous les stocks sont au vert',
+                              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                            ),
+                            Text(
+                              'Aucun produit n’a atteint son seuil d’alerte.',
+                              style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Card(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: alertes.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final p = alertes[i];
+                    return ListTile(
+                      leading: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEE2E2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.warning_rounded, color: Color(0xFFDC2626), size: 20),
+                      ),
+                      title: Text(p.nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      subtitle: Text('Seuil d’alerte : ${p.seuilAlerte} ${p.unite}'),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEE2E2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFFCA5A5)),
+                        ),
+                        child: Text(
+                          '${p.stock} ${p.unite}',
+                          style: const TextStyle(fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+            const SizedBox(height: 24),
+
+            // Historique des Ventes du Jour
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Ventes du jour',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                ),
+                Text(
+                  '${ventes.length} ticket(s)',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            if (ventes.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(
+                    child: Text(
+                      'Aucune vente enregistrée pour le moment aujourd’hui.',
+                      style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Card(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: ventes.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (ctx, i) {
+                    final v = ventes[i];
+                    DateTime? dt;
+                    try {
+                      dt = DateTime.parse(v.date);
+                    } catch (_) {}
+                    final heureStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
+                    final isCredit = v.modePaiement == 'credit' || v.resteCredit > 0;
+
+                    return ListTile(
+                      leading: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: isCredit ? const Color(0xFFFEF3C7) : const Color(0xFFDCFCE7),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          isCredit ? Icons.credit_card_rounded : Icons.receipt_long_rounded,
+                          color: isCredit ? const Color(0xFFD97706) : const Color(0xFF16A34A),
+                          size: 20,
+                        ),
+                      ),
+                      title: Row(
+                        children: [
+                          Text(
+                            'Ticket #${v.id}',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                          ),
+                          if (heureStr.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Text('à $heureStr', style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                          ],
+                          if (isCredit && v.clientNom != null) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(6),
                               ),
-                              Text(
-                                'Aucun produit n’a atteint son seuil d’alerte.',
-                                style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                              child: Text(
+                                'Crédit : ${v.clientNom}',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFB45309)),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      subtitle: Text(
+                        v.lignes.map((l) => '${l.qte}x ${l.produit.nom}').join(', '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                      ),
+                      onTap: () {
+                        showDialog<void>(
+                          context: ctx,
+                          builder: (dialogCtx) => AlertDialog(
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            title: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('Ticket #${v.id}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                                const SizedBox(width: 8),
+                                Text(fcfa(v.total), style: const TextStyle(fontWeight: FontWeight.w900)),
+                              ],
+                            ),
+                            content: SizedBox(
+                              width: 340,
+                              child: SingleChildScrollView(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    for (final l in v.lignes)
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 3),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Expanded(child: Text('${l.qte}x ${l.produit.nom}')),
+                                            Text(fcfa(l.total), style: const TextStyle(fontWeight: FontWeight.w600)),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            actions: [
+                              OutlinedButton.icon(
+                                onPressed: () => TicketService.imprimerTicket(
+                                  context: dialogCtx,
+                                  venteId: v.id,
+                                  lignes: v.lignes,
+                                  total: v.total,
+                                  montantPaye: v.montantPaye,
+                                  clientNom: v.clientNom,
+                                ),
+                                icon: const Icon(Icons.print_rounded, size: 18),
+                                label: const Text('Imprimer'),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () => TicketService.telechargerPdf(
+                                  context: dialogCtx,
+                                  venteId: v.id,
+                                  lignes: v.lignes,
+                                  total: v.total,
+                                  montantPaye: v.montantPaye,
+                                  clientNom: v.clientNom,
+                                ),
+                                icon: const Icon(Icons.download_rounded, size: 18),
+                                label: const Text('Télécharger PDF'),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.pop(dialogCtx),
+                                child: const Text('Fermer'),
                               ),
                             ],
+                          ),
+                        );
+                      },
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            fcfa(v.total),
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                          ),
+                          const SizedBox(width: 6),
+                          IconButton(
+                            tooltip: 'Annuler cette vente',
+                            icon: const Icon(Icons.undo_rounded, size: 18, color: Color(0xFFDC2626)),
+                            onPressed: () async {
+                              final ok = await confirmer(
+                                ctx,
+                                'Annuler le ticket #${v.id} de ${fcfa(v.total)} ?\n'
+                                'Les articles seront automatiquement réintégrés en stock.',
+                                oui: 'Annuler la vente',
+                              );
+                              if (ok && ctx.mounted) {
+                                await ctx.read<Repo>().annulerVente(v.id);
+                                if (ctx.mounted) message(ctx, '✓ Vente #${v.id} annulée (stock restitué)');
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+            const SizedBox(height: 24),
+            const _SauvegardeCard(),
+          ],
+        );
+      },
+    );
+  }
+
+  // =========================================================================
+  // VUE 2 : SITUATION D'INVENTAIRE (SI) & VALORISATION DU STOCK
+  // =========================================================================
+  Widget _buildVueInventaire(BuildContext context, Repo repo) {
+    return FutureBuilder<SituationInventaire>(
+      future: repo.situationInventaire(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final si = snap.data!;
+
+        final filtrerProds = _filtreSi.isEmpty
+            ? si.produits
+            : si.produits
+                .where((p) =>
+                    p.nom.toLowerCase().contains(_filtreSi.toLowerCase()) ||
+                    p.categorie.toLowerCase().contains(_filtreSi.toLowerCase()) ||
+                    p.codeBarres.contains(_filtreSi))
+                .toList();
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Barre d'actions exports SI
+            Card(
+              color: const Color(0xFFF8FAFC),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.inventory_2_rounded, color: Color(0xFF1E293B), size: 28),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Situation d’Inventaire & Valorisation', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                          Text('État complet du capital immobilisé en stock et potentiel de marge', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                        ],
+                      ),
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: () => TicketService.telechargerPdfSituationInventaire(context, si),
+                          icon: const Icon(Icons.picture_as_pdf_rounded, size: 18),
+                          label: const Text('Export PDF (SI)'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _exporterSiCsv(context, si),
+                          icon: const Icon(Icons.table_chart_rounded, size: 18),
+                          label: const Text('Export Excel/CSV'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 4 Cartes Métriques Valorisation
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 780;
+                final cards = [
+                  _StatCard(
+                    titre: 'Valeur d’Achat (Capital)',
+                    valeur: fcfa(si.valeurAchat),
+                    detail: 'Coût total du stock en magasin',
+                    icon: Icons.account_balance_wallet_rounded,
+                    iconColor: const Color(0xFF2563EB),
+                    bgColor: const Color(0xFFEFF6FF),
+                  ),
+                  _StatCard(
+                    titre: 'Valeur de Vente (CA potentiel)',
+                    valeur: fcfa(si.valeurVente),
+                    detail: 'Chiffre d’affaires si tout est vendu',
+                    icon: Icons.price_check_rounded,
+                    iconColor: const Color(0xFF16A34A),
+                    bgColor: const Color(0xFFF0FDF4),
+                  ),
+                  _StatCard(
+                    titre: 'Marge Potentielle',
+                    valeur: fcfa(si.margeTheorique),
+                    detail: 'Bénéfice latent en rayon',
+                    icon: Icons.trending_up_rounded,
+                    iconColor: const Color(0xFF0F766E),
+                    bgColor: const Color(0xFFF0FDFA),
+                  ),
+                  _StatCard(
+                    titre: 'Volume Total en Stock',
+                    valeur: '${si.totalArticles} pièces',
+                    detail: '${si.nbReferences} références d’articles',
+                    icon: Icons.all_inbox_rounded,
+                    iconColor: const Color(0xFF7C3AED),
+                    bgColor: const Color(0xFFF5F3FF),
+                  ),
+                ];
+
+                if (isWide) {
+                  return Row(
+                    children: [
+                      for (int i = 0; i < cards.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 12),
+                        Expanded(child: cards[i]),
+                      ],
+                    ],
+                  );
+                }
+
+                return Column(
+                  children: [
+                    for (int i = 0; i < cards.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      cards[i],
+                    ],
+                  ],
+                );
+              },
+            ),
+
+            const SizedBox(height: 20),
+
+            // Barre de filtre produit
+            TextField(
+              decoration: InputDecoration(
+                hintText: 'Rechercher un article dans la situation d’inventaire...',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: _filtreSi.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear_rounded),
+                        onPressed: () => setState(() => _filtreSi = ''),
+                      )
+                    : null,
+              ),
+              onChanged: (v) => setState(() => _filtreSi = v),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Tableau détaillé des articles
+            Card(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columnSpacing: 24,
+                  columns: const [
+                    DataColumn(label: Text('Article', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Catégorie', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Stock actuel', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Prix achat', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Prix vente', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Valeur achat', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Valeur vente', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Marge unitaire', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: [
+                    for (final p in filtrerProds)
+                      DataRow(cells: [
+                        DataCell(Text(p.nom, style: const TextStyle(fontWeight: FontWeight.w600))),
+                        DataCell(Text(p.categorie.isEmpty ? 'Général' : p.categorie)),
+                        DataCell(Text('${p.stock} ${p.unite}', style: TextStyle(fontWeight: FontWeight.bold, color: p.enAlerte ? const Color(0xFFDC2626) : const Color(0xFF0F172A)))),
+                        DataCell(Text(fcfa(p.prixAchat))),
+                        DataCell(Text(fcfa(p.prixVente))),
+                        DataCell(Text(fcfa(p.stock * p.prixAchat), style: const TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w600))),
+                        DataCell(Text(fcfa(p.stock * p.prixVente), style: const TextStyle(color: Color(0xFF16A34A), fontWeight: FontWeight.w600))),
+                        DataCell(Text(fcfa(p.prixVente - p.prixAchat), style: const TextStyle(color: Color(0xFF0F766E)))),
+                      ]),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // =========================================================================
+  // VUE 3 : STATISTIQUES & ANALYSES DES VENTES
+  // =========================================================================
+  Widget _buildVueStatistiques(BuildContext context, Repo repo) {
+    return FutureBuilder<(List<StatTopProduit>, List<StatCategorie>, StatGrosDetail)>(
+      future: Future.wait([
+        repo.topProduitsVendus(limit: 10),
+        repo.ventesParCategorie(),
+        repo.repartitionGrosDetail(),
+      ]).then((res) => (
+            res[0] as List<StatTopProduit>,
+            res[1] as List<StatCategorie>,
+            res[2] as StatGrosDetail,
+          )),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final (topProds, categories, grosDetail) = snap.data!;
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Répartition Gros vs Détail
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.pie_chart_rounded, color: Color(0xFF15803D), size: 24),
+                        SizedBox(width: 10),
+                        Text('Répartition des Ventes : Détail vs Gros', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF0FDF4),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFBBF7D0)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('VENTES AU DÉTAIL', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF166534))),
+                                const SizedBox(height: 4),
+                                Text(fcfa(grosDetail.caDetail), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF15803D))),
+                                Text('${grosDetail.qteDetail} unités vendues', style: const TextStyle(fontSize: 12, color: Color(0xFF166534))),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFBFDBFE)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('VENTES EN GROS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1E40AF))),
+                                const SizedBox(height: 4),
+                                Text(fcfa(grosDetail.caGros), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF1D4ED8))),
+                                Text('${grosDetail.qteGros} unités vendues (${grosDetail.partGrosPct.toStringAsFixed(1)}% du CA)', style: const TextStyle(fontSize: 12, color: Color(0xFF1E40AF))),
+                              ],
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                )
-              else
-                Card(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: alertes.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final p = alertes[i];
-                      return ListTile(
-                        leading: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEE2E2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(Icons.warning_rounded, color: Color(0xFFDC2626), size: 20),
-                        ),
-                        title: Text(p.nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                        subtitle: Text('Seuil d’alerte : ${p.seuilAlerte} ${p.unite}'),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEE2E2),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFFFCA5A5)),
-                          ),
-                          child: Text(
-                            '${p.stock} ${p.unite}',
-                            style: const TextStyle(fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                  ],
                 ),
-
-              const SizedBox(height: 24),
-
-              // Section Historique des Ventes du Jour
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Ventes du jour',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-                  ),
-                  Text(
-                    '${ventes.length} ticket(s)',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
-                  ),
-                ],
               ),
-              const SizedBox(height: 8),
+            ),
 
-              if (ventes.isEmpty)
-                const Card(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Center(
-                      child: Text(
-                        'Aucune vente enregistrée pour le moment aujourd’hui.',
-                        style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                      ),
+            const SizedBox(height: 20),
+
+            // Top 10 des produits les plus vendus
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.leaderboard_rounded, color: Color(0xFFD97706), size: 24),
+                        SizedBox(width: 10),
+                        Text('Top 10 des Articles les Plus Vendus', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                      ],
                     ),
-                  ),
-                )
-              else
-                Card(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: ventes.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (ctx, i) {
-                      final v = ventes[i];
-                      DateTime? dt;
-                      try {
-                        dt = DateTime.parse(v.date);
-                      } catch (_) {}
-                      final heureStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
-                      final isCredit = v.modePaiement == 'credit' || v.resteCredit > 0;
-
-                      return ListTile(
-                        leading: Container(
-                          width: 38,
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: isCredit ? const Color(0xFFFEF3C7) : const Color(0xFFDCFCE7),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            isCredit ? Icons.credit_card_rounded : Icons.receipt_long_rounded,
-                            color: isCredit ? const Color(0xFFD97706) : const Color(0xFF16A34A),
-                            size: 20,
-                          ),
-                        ),
-                        title: Row(
-                          children: [
-                            Text(
-                              'Ticket #${v.id}',
-                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-                            ),
-                            if (heureStr.isNotEmpty) ...[
-                              const SizedBox(width: 8),
-                              Text(
-                                'à $heureStr',
-                                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                    const SizedBox(height: 14),
+                    if (topProds.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: Text('Aucune vente enregistrée pour le moment.', style: TextStyle(color: Color(0xFF64748B)))),
+                      )
+                    else
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: topProds.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (ctx, i) {
+                          final item = topProds[i];
+                          return ListTile(
+                            leading: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: i < 3 ? const Color(0xFFFEF3C7) : const Color(0xFFF1F5F9),
+                                shape: BoxShape.circle,
                               ),
-                            ],
-                            if (isCredit && v.clientNom != null) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFEF3C7),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
+                              child: Center(
                                 child: Text(
-                                  'Crédit : ${v.clientNom}',
-                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFB45309)),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        subtitle: Text(
-                          v.lignes.map((l) => '${l.qte}x ${l.produit.nom}').join(', '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                        ),
-                        onTap: () {
-                          showDialog<void>(
-                            context: ctx,
-                            builder: (dialogCtx) => AlertDialog(
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                              title: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text('Ticket #${v.id}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                                  const SizedBox(width: 8),
-                                  Text(fcfa(v.total), style: const TextStyle(fontWeight: FontWeight.w900)),
-                                ],
-                              ),
-                              content: SizedBox(
-                                width: 340,
-                                child: SingleChildScrollView(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      for (final l in v.lignes)
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(vertical: 3),
-                                          child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Expanded(child: Text('${l.qte}x ${l.produit.nom}')),
-                                              Text(fcfa(l.total), style: const TextStyle(fontWeight: FontWeight.w600)),
-                                            ],
-                                          ),
-                                        ),
-                                    ],
+                                  '#${i + 1}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    color: i < 3 ? const Color(0xFFB45309) : const Color(0xFF475569),
                                   ),
                                 ),
                               ),
-                              actions: [
-                                OutlinedButton.icon(
-                                  onPressed: () => TicketService.imprimerTicket(
-                                    context: dialogCtx,
-                                    venteId: v.id,
-                                    lignes: v.lignes,
-                                    total: v.total,
-                                    montantPaye: v.montantPaye,
-                                    clientNom: v.clientNom,
-                                  ),
-                                  icon: const Icon(Icons.print_rounded, size: 18),
-                                  label: const Text('Imprimer'),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: () => TicketService.telechargerPdf(
-                                    context: dialogCtx,
-                                    venteId: v.id,
-                                    lignes: v.lignes,
-                                    total: v.total,
-                                    montantPaye: v.montantPaye,
-                                    clientNom: v.clientNom,
-                                  ),
-                                  icon: const Icon(Icons.download_rounded, size: 18),
-                                  label: const Text('Télécharger PDF'),
-                                ),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(dialogCtx),
-                                  child: const Text('Fermer'),
-                                ),
-                              ],
+                            ),
+                            title: Text(item.nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                            subtitle: Text('${item.quantite} unité(s) vendue(s)'),
+                            trailing: Text(
+                              fcfa(item.chiffreAffaires),
+                              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF15803D)),
                             ),
                           );
                         },
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              fcfa(v.total),
-                              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                            ),
-                            const SizedBox(width: 6),
-                            IconButton(
-                              tooltip: 'Annuler cette vente',
-                              icon: const Icon(Icons.undo_rounded, size: 18, color: Color(0xFFDC2626)),
-                              onPressed: () async {
-                                final ok = await confirmer(
-                                  ctx,
-                                  'Annuler le ticket #${v.id} de ${fcfa(v.total)} ?\n'
-                                  'Les articles seront automatiquement réintégrés en stock.',
-                                  oui: 'Annuler la vente',
-                                );
-                                if (ok && ctx.mounted) {
-                                  await ctx.read<Repo>().annulerVente(v.id);
-                                  if (ctx.mounted) message(ctx, '✓ Vente #${v.id} annulée (stock restitué)');
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                      ),
+                  ],
                 ),
+              ),
+            ),
 
-              const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-              // Section Sauvegarde & Données locales
-              const _SauvegardeCard(),
-            ],
-          );
-        },
-      ),
+            // Répartition par Catégories
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.category_rounded, color: Color(0xFF7C3AED), size: 24),
+                        SizedBox(width: 10),
+                        Text('Chiffre d’Affaires par Catégorie', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    if (categories.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: Text('Aucune donnée de catégorie disponible.', style: TextStyle(color: Color(0xFF64748B)))),
+                      )
+                    else
+                      for (final c in categories)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(c.categorie, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                              Text(fcfa(c.chiffreAffaires), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF0F172A))),
+                            ],
+                          ),
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -603,7 +1012,7 @@ class _StatCard extends StatelessWidget {
             Text(
               valeur,
               style: const TextStyle(
-                fontSize: 24,
+                fontSize: 22,
                 fontWeight: FontWeight.w900,
                 color: Color(0xFF0F172A),
                 letterSpacing: -0.5,

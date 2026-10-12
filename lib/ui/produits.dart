@@ -183,51 +183,42 @@ class _ProduitsPageState extends State<ProduitsPage> {
             ),
           ),
 
-          // Filtres par catégorie et bouton filtre alerte
+          // Filtres par catégorie et bouton filtre alerte (sur plusieurs lignes sans défilement horizontal forcé)
           FutureBuilder<List<String>>(
             future: repo.categories(),
             builder: (context, snap) {
               final categories = snap.data ?? const <String>[];
-              return SizedBox(
-                height: 44,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        selected: _selectedCategory == null && !_onlyAlerts,
-                        label: const Text('Tous'),
-                        onSelected: (_) => setState(() {
-                          _selectedCategory = null;
+                    FilterChip(
+                      selected: _selectedCategory == null && !_onlyAlerts,
+                      label: const Text('Tous'),
+                      onSelected: (_) => setState(() {
+                        _selectedCategory = null;
+                        _onlyAlerts = false;
+                      }),
+                      showCheckmark: false,
+                    ),
+                    FilterChip(
+                      selected: _onlyAlerts,
+                      avatar: const Icon(Icons.warning_amber_rounded, size: 16, color: Color(0xFFDC2626)),
+                      label: const Text('Stocks en alerte'),
+                      onSelected: (sel) => setState(() => _onlyAlerts = sel),
+                      showCheckmark: false,
+                    ),
+                    for (final cat in categories)
+                      FilterChip(
+                        selected: _selectedCategory == cat && !_onlyAlerts,
+                        label: Text(cat),
+                        onSelected: (sel) => setState(() {
+                          _selectedCategory = sel ? cat : null;
                           _onlyAlerts = false;
                         }),
                         showCheckmark: false,
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        selected: _onlyAlerts,
-                        avatar: const Icon(Icons.warning_amber_rounded, size: 16, color: Color(0xFFDC2626)),
-                        label: const Text('Stocks en alerte'),
-                        onSelected: (sel) => setState(() => _onlyAlerts = sel),
-                        showCheckmark: false,
-                      ),
-                    ),
-                    for (final cat in categories)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: FilterChip(
-                          selected: _selectedCategory == cat && !_onlyAlerts,
-                          label: Text(cat),
-                          onSelected: (sel) => setState(() {
-                            _selectedCategory = sel ? cat : null;
-                            _onlyAlerts = false;
-                          }),
-                          showCheckmark: false,
-                        ),
                       ),
                   ],
                 ),

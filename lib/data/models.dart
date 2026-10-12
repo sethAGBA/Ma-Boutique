@@ -238,4 +238,63 @@ class ParametresBoutique {
   }
 }
 
+class SituationInventaire {
+  final int nbReferences;
+  final int totalArticles;
+  final int valeurAchat;
+  final int valeurVente;
+  final int margeTheorique;
+  final List<Produit> produits;
+
+  const SituationInventaire({
+    required this.nbReferences,
+    required this.totalArticles,
+    required this.valeurAchat,
+    required this.valeurVente,
+    required this.margeTheorique,
+    required this.produits,
+  });
+}
+
+class StatTopProduit {
+  final String nom;
+  final int quantite;
+  final int chiffreAffaires;
+
+  const StatTopProduit({
+    required this.nom,
+    required this.quantite,
+    required this.chiffreAffaires,
+  });
+}
+
+class StatCategorie {
+  final String categorie;
+  final int chiffreAffaires;
+  final int nbLignes;
+
+  const StatCategorie({
+    required this.categorie,
+    required this.chiffreAffaires,
+    required this.nbLignes,
+  });
+}
+
+class StatGrosDetail {
+  final int caDetail;
+  final int qteDetail;
+  final int caGros;
+  final int qteGros;
+
+  const StatGrosDetail({
+    required this.caDetail,
+    required this.qteDetail,
+    required this.caGros,
+    required this.qteGros,
+  });
+
+  int get caTotal => caDetail + caGros;
+  double get partGrosPct => caTotal > 0 ? (caGros / caTotal) * 100 : 0.0;
+}
+
 

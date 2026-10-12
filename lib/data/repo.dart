@@ -456,6 +456,92 @@ class Repo extends ChangeNotifier {
     );
   }
 
+  /// Situation d'Inventaire (SI) & Valorisation globale du stock
+  Future<SituationInventaire> situationInventaire() async {
+    final d = await _d;
+    final stats = await d.rawQuery('''
+      SELECT 
+        COUNT(*) as nb_refs,
+        COALESCE(SUM(stock), 0) as total_articles,
+        COALESCE(SUM(stock * prix_achat), 0) as val_achat,
+        COALESCE(SUM(stock * prix_vente), 0) as val_vente,
+        COALESCE(SUM(stock * (prix_vente - prix_achat)), 0) as marge
+      FROM produits
+      WHERE actif = 1
+    ''');
+    final prods = await produits();
+    final first = stats.first;
+    return SituationInventaire(
+      nbReferences: first['nb_refs'] as int,
+      totalArticles: first['total_articles'] as int,
+      valeurAchat: first['val_achat'] as int,
+      valeurVente: first['val_vente'] as int,
+      margeTheorique: first['marge'] as int,
+      produits: prods,
+    );
+  }
+
+  /// Top articles les plus vendus
+  Future<List<StatTopProduit>> topProduitsVendus({int limit = 10}) async {
+    final d = await _d;
+    final rows = await d.rawQuery('''
+      SELECT 
+        p.nom,
+        SUM(l.quantite) as qte,
+        SUM(l.quantite * l.prix_unitaire) as ca
+      FROM lignes_vente l
+      JOIN produits p ON p.id = l.produit_id
+      GROUP BY p.id
+      ORDER BY ca DESC
+      LIMIT ?
+    ''', [limit]);
+    return rows.map((r) => StatTopProduit(
+      nom: r['nom'] as String,
+      quantite: (r['qte'] as num?)?.toInt() ?? 0,
+      chiffreAffaires: (r['ca'] as num?)?.toInt() ?? 0,
+    )).toList();
+  }
+
+  /// Ventes ventilées par catégorie
+  Future<List<StatCategorie>> ventesParCategorie() async {
+    final d = await _d;
+    final rows = await d.rawQuery('''
+      SELECT 
+        COALESCE(NULLIF(p.categorie, ''), 'Autres') as cat,
+        SUM(l.quantite * l.prix_unitaire) as ca,
+        COUNT(l.id) as nb
+      FROM lignes_vente l
+      JOIN produits p ON p.id = l.produit_id
+      GROUP BY cat
+      ORDER BY ca DESC
+    ''');
+    return rows.map((r) => StatCategorie(
+      categorie: r['cat'] as String,
+      chiffreAffaires: (r['ca'] as num?)?.toInt() ?? 0,
+      nbLignes: (r['nb'] as num?)?.toInt() ?? 0,
+    )).toList();
+  }
+
+  /// Répartition des ventes Gros vs Détail
+  Future<StatGrosDetail> repartitionGrosDetail() async {
+    final d = await _d;
+    final rows = await d.rawQuery('''
+      SELECT 
+        COALESCE(SUM(CASE WHEN est_gros = 0 THEN quantite * prix_unitaire ELSE 0 END), 0) as ca_detail,
+        COALESCE(SUM(CASE WHEN est_gros = 0 THEN quantite ELSE 0 END), 0) as qte_detail,
+        COALESCE(SUM(CASE WHEN est_gros = 1 THEN quantite * prix_unitaire ELSE 0 END), 0) as ca_gros,
+        COALESCE(SUM(CASE WHEN est_gros = 1 THEN quantite ELSE 0 END), 0) as qte_gros
+      FROM lignes_vente
+    ''');
+    final first = rows.first;
+    return StatGrosDetail(
+      caDetail: first['ca_detail'] as int,
+      qteDetail: first['qte_detail'] as int,
+      caGros: first['ca_gros'] as int,
+      qteGros: first['qte_gros'] as int,
+    );
+  }
+
   // ------------------------------------------------------------- Import/Export
 
   /// Exporte tous les produits du catalogue au format CSV standard (séparateur point-virgule pour Excel).
@@ -686,8 +772,25 @@ class Repo extends ChangeNotifier {
 
   Future<Utilisateur?> authentifierPin(String pin) async {
     final d = await _d;
-    final rows = await d.query('utilisateurs',
-        where: 'actif = 1 AND pin = ?', whereArgs: [pin.trim()], limit: 1);
+    final pinPropre = pin.trim();
+    var rows = await d.query('utilisateurs',
+        where: 'actif = 1 AND pin = ?', whereArgs: [pinPropre], limit: 1);
+
+    // Fallback de transition si l'utilisateur saisit 123456 ou 000000 alors que la base avait encore 1234 ou 0000
+    if (rows.isEmpty && pinPropre == '123456') {
+      rows = await d.query('utilisateurs',
+          where: "actif = 1 AND pin = '1234' AND role = 'gerant'", limit: 1);
+      if (rows.isNotEmpty) {
+        await d.rawUpdate("UPDATE utilisateurs SET pin = '123456' WHERE id = ?", [rows.first['id']]);
+      }
+    } else if (rows.isEmpty && pinPropre == '000000') {
+      rows = await d.query('utilisateurs',
+          where: "actif = 1 AND pin = '0000' AND role = 'caissier'", limit: 1);
+      if (rows.isNotEmpty) {
+        await d.rawUpdate("UPDATE utilisateurs SET pin = '000000' WHERE id = ?", [rows.first['id']]);
+      }
+    }
+
     if (rows.isEmpty) return null;
     final u = Utilisateur.fromMap(rows.first);
     _utilisateurActif = u;
@@ -706,11 +809,12 @@ class Repo extends ChangeNotifier {
   }
 
   Future<bool> changerPin(int userId, String nouveauPin) async {
-    if (nouveauPin.trim().length < 4) return false;
+    final p = nouveauPin.trim();
+    if (p.length != 6) return false;
     final d = await _d;
     await d.update(
       'utilisateurs',
-      {'pin': nouveauPin.trim()},
+      {'pin': p},
       where: 'id = ?',
       whereArgs: [userId],
     );
