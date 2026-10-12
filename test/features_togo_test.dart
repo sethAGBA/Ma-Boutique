@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stockar/data/models.dart';
 import 'package:stockar/ui/facture_service.dart';
 import 'package:stockar/ui/helpers.dart';
+import 'package:stockar/ui/searchable_dropdown.dart';
 
 void main() {
   group('Marché Togolais & Fonctionnalités 1, 3, 5', () {
@@ -225,6 +226,29 @@ void main() {
       final entete = String.fromCharCodes(pdfBytes.sublist(0, 5));
       expect(entete, '%PDF-');
     });
+
+    test('Dropdown avec recherche : Filtrage par nom, référence et sous-titre', () {
+      const itemTomate = SearchableItem<int>(
+        value: 10,
+        titre: 'Boîte Tomate Concentrée Gino 70g',
+        sousTitre: 'Stock : 48 boîtes • Cat : Conserves',
+        reference: '600100200300 Conserves',
+      );
+
+      // Recherche par nom
+      expect(itemTomate.correspond('gino'), isTrue);
+      expect(itemTomate.correspond('TOMATE'), isTrue);
+
+      // Recherche par sous-titre ou catégorie
+      expect(itemTomate.correspond('conserves'), isTrue);
+
+      // Recherche par code-barres / référence
+      expect(itemTomate.correspond('600100'), isTrue);
+
+      // Recherche sans correspondance
+      expect(itemTomate.correspond('spaghetti'), isFalse);
+    });
   });
 }
+
 

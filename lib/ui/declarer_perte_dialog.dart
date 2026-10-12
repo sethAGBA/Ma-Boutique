@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../data/models.dart';
 import '../data/repo.dart';
 import 'helpers.dart';
+import 'searchable_dropdown.dart';
 
 /// Boîte de dialogue moderne permettant d'enregistrer une perte, avarie,
 /// produit périmé ou consommation interne avec déduction automatique du stock.
@@ -123,26 +124,33 @@ class _DeclarerPerteDialogState extends State<DeclarerPerteDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Sélection du produit
+                // Sélection du produit avec recherche
                 if (widget.produitInitial == null) ...[
                   const Text('Article concerné *', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
                   const SizedBox(height: 6),
-                  DropdownButtonFormField<int>(
-                    initialValue: _produitSelectionne?.id,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.inventory_2_rounded),
-                    ),
+                  SearchableDropdown<int>(
+                    value: _produitSelectionne?.id,
+                    label: 'Choisir un article',
+                    hint: 'Rechercher parmi les 300+ articles...',
+                    titreDialogue: 'Rechercher un article du stock',
+                    prefixIcon: Icons.inventory_2_rounded,
                     items: [
                       for (final p in _produits)
-                        DropdownMenuItem(
-                          value: p.id,
-                          child: Text('${p.nom} (${p.stock} ${p.unite} en stock)'),
+                        SearchableItem<int>(
+                          value: p.id!,
+                          titre: p.nom,
+                          sousTitre: 'Stock : ${p.stock} ${p.unite}(s) • Cat : ${p.categorie}',
+                          reference: '${p.codeBarres} ${p.categorie}',
+                          trailing: Text(
+                            fcfa(p.prixAchat),
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF475569)),
+                          ),
+                          icone: Icons.inventory_2_outlined,
                         ),
                     ],
                     onChanged: (id) {
                       setState(() {
-                        _produitSelectionne = _produits.firstWhere((p) => p.id == id);
+                        _produitSelectionne = id != null ? _produits.where((p) => p.id == id).firstOrNull : null;
                       });
                     },
                     validator: (v) => v == null ? 'Veuillez sélectionner un article' : null,

@@ -6,6 +6,7 @@ import '../data/models.dart';
 import '../data/repo.dart';
 import 'facture_service.dart';
 import 'helpers.dart';
+import 'searchable_dropdown.dart';
 import 'ticket_service.dart';
 
 class PanierEnAttente {
@@ -1307,16 +1308,30 @@ class _PaiementDialogState extends State<_PaiementDialog> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                DropdownButtonFormField<int>(
-                  initialValue: _clientId,
-                  decoration: const InputDecoration(
-                    labelText: 'Attribuer la dette au client *',
-                    prefixIcon: Icon(Icons.person_rounded),
-                  ),
+                SearchableDropdown<int>(
+                  value: _clientId,
+                  label: 'Attribuer la dette au client *',
+                  hint: 'Rechercher par nom ou numéro WhatsApp...',
+                  titreDialogue: 'Sélectionner le client',
+                  prefixIcon: Icons.person_rounded,
                   items: [
-                    for (final c in _clients) DropdownMenuItem(value: c.id, child: Text('${c.nom} (${c.telephone})')),
+                    for (final c in _clients)
+                      SearchableItem<int>(
+                        value: c.id!,
+                        titre: c.nom,
+                        sousTitre: c.telephone.isNotEmpty ? 'Tel : ${c.telephone}' : 'Aucun numéro',
+                        reference: c.telephone,
+                        trailing: c.soldeCredit > 0
+                            ? Text(
+                                'Dette : ${fcfa(c.soldeCredit)}',
+                                style: const TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w700, fontSize: 11),
+                              )
+                            : null,
+                        icone: Icons.person_outline_rounded,
+                      ),
                   ],
                   onChanged: (v) => setState(() => _clientId = v),
+                  validator: (v) => v == null ? 'Veuillez sélectionner un client' : null,
                 ),
                 if (_clients.isEmpty)
                   const Padding(

@@ -11,6 +11,7 @@ import '../data/models.dart';
 import '../data/repo.dart';
 import 'declarer_perte_dialog.dart';
 import 'helpers.dart';
+import 'searchable_dropdown.dart';
 
 class ProduitsPage extends StatefulWidget {
   const ProduitsPage({super.key});
@@ -692,16 +693,27 @@ class _ProduitFormState extends State<_ProduitForm> {
                         style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
                       ),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<int?>(
-                        initialValue: _produitParentId,
-                        decoration: const InputDecoration(
-                          labelText: 'Carton parent de réserve (facultatif)',
-                          prefixIcon: Icon(Icons.archive_rounded),
-                        ),
+                      SearchableDropdown<int?>(
+                        value: _produitParentId,
+                        label: 'Carton parent de réserve (facultatif)',
+                        hint: 'Rechercher parmi les 300+ articles...',
+                        titreDialogue: 'Sélectionner le carton parent',
+                        prefixIcon: Icons.archive_rounded,
+                        permetEffacer: true,
+                        texteEffacer: 'Aucun carton parent (article indépendant)',
                         items: [
-                          const DropdownMenuItem(value: null, child: Text('Aucun parent (article indépendant)')),
                           for (final prod in _produitsDisponibles)
-                            DropdownMenuItem(value: prod.id, child: Text('${prod.nom} (${prod.stock} en stock)')),
+                            SearchableItem<int?>(
+                              value: prod.id,
+                              titre: prod.nom,
+                              sousTitre: 'Stock : ${prod.stock} ${prod.unite}(s) • Cat : ${prod.categorie}',
+                              reference: '${prod.codeBarres} ${prod.categorie}',
+                              trailing: Text(
+                                fcfa(prod.prixVente),
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF475569)),
+                              ),
+                              icone: Icons.archive_outlined,
+                            ),
                         ],
                         onChanged: (val) => setState(() => _produitParentId = val),
                       ),
