@@ -30,7 +30,7 @@ class AppDb {
     final path = await dbPath;
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (d) async {
         await d.execute('PRAGMA foreign_keys = ON');
       },
@@ -41,6 +41,39 @@ class AppDb {
         try {
           await d.rawUpdate("UPDATE utilisateurs SET pin = '123456' WHERE pin = '1234' AND role = 'gerant'");
           await d.rawUpdate("UPDATE utilisateurs SET pin = '000000' WHERE pin = '0000' AND role = 'caissier'");
+        } catch (_) {}
+
+        // Sécurisation multi-conditionnement si DB existante
+        try {
+          await d.execute('ALTER TABLE produits ADD COLUMN produit_parent_id INTEGER');
+        } catch (_) {}
+        try {
+          await d.execute('ALTER TABLE produits ADD COLUMN facteur_conversion INTEGER NOT NULL DEFAULT 1');
+        } catch (_) {}
+        try {
+          await d.execute('''
+            CREATE TABLE IF NOT EXISTS clotures_caisse(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              date TEXT NOT NULL,
+              date_heure TEXT NOT NULL,
+              caissier_nom TEXT NOT NULL DEFAULT '',
+              fond_caisse INTEGER NOT NULL DEFAULT 0,
+              total_ventes INTEGER NOT NULL DEFAULT 0,
+              nb_ventes INTEGER NOT NULL DEFAULT 0,
+              benefice_estime INTEGER NOT NULL DEFAULT 0,
+              total_especes INTEGER NOT NULL DEFAULT 0,
+              total_wave INTEGER NOT NULL DEFAULT 0,
+              total_orange_money INTEGER NOT NULL DEFAULT 0,
+              total_mtn_momo INTEGER NOT NULL DEFAULT 0,
+              total_autres INTEGER NOT NULL DEFAULT 0,
+              total_credits INTEGER NOT NULL DEFAULT 0,
+              dettes_recouvrees INTEGER NOT NULL DEFAULT 0,
+              depenses_especes INTEGER NOT NULL DEFAULT 0,
+              especes_theoriques INTEGER NOT NULL DEFAULT 0,
+              especes_comptees INTEGER NOT NULL DEFAULT 0,
+              ecart INTEGER NOT NULL DEFAULT 0,
+              observations TEXT NOT NULL DEFAULT ''
+            )''');
         } catch (_) {}
       },
     );
@@ -64,7 +97,9 @@ class AppDb {
         prix_gros INTEGER NOT NULL DEFAULT 0,
         stock INTEGER NOT NULL DEFAULT 0,
         seuil_alerte INTEGER NOT NULL DEFAULT 5,
-        actif INTEGER NOT NULL DEFAULT 1
+        actif INTEGER NOT NULL DEFAULT 1,
+        produit_parent_id INTEGER REFERENCES produits(id),
+        facteur_conversion INTEGER NOT NULL DEFAULT 1
       )''');
     await d.execute('CREATE INDEX idx_produits_code ON produits(code_barres)');
     await d.execute('''
@@ -134,6 +169,8 @@ class AppDb {
     await d.insert('parametres', {'cle': 'adresse', 'valeur': 'Marché Central'});
     await d.insert('parametres', {'cle': 'message_ticket', 'valeur': 'Merci de votre visite et à bientôt !'});
     await d.insert('parametres', {'cle': 'devise', 'valeur': 'F CFA'});
+    await d.insert('parametres', {'cle': 'largeur_ticket', 'valeur': '80'});
+    await d.insert('parametres', {'cle': 'ouvrir_tiroir', 'valeur': '0'});
   }
 
   Future<void> _upgrade(Database d, int oldVersion, int newVersion) async {
@@ -184,6 +221,40 @@ class AppDb {
         await d.insert('parametres', {'cle': e.key, 'valeur': e.value},
             conflictAlgorithm: ConflictAlgorithm.ignore);
       }
+    }
+
+    if (oldVersion < 3) {
+      try {
+        await d.execute('ALTER TABLE produits ADD COLUMN produit_parent_id INTEGER');
+      } catch (_) {}
+      try {
+        await d.execute('ALTER TABLE produits ADD COLUMN facteur_conversion INTEGER NOT NULL DEFAULT 1');
+      } catch (_) {}
+      await d.execute('''
+        CREATE TABLE IF NOT EXISTS clotures_caisse(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          date TEXT NOT NULL,
+          date_heure TEXT NOT NULL,
+          caissier_nom TEXT NOT NULL DEFAULT '',
+          fond_caisse INTEGER NOT NULL DEFAULT 0,
+          total_ventes INTEGER NOT NULL DEFAULT 0,
+          nb_ventes INTEGER NOT NULL DEFAULT 0,
+          benefice_estime INTEGER NOT NULL DEFAULT 0,
+          total_especes INTEGER NOT NULL DEFAULT 0,
+          total_wave INTEGER NOT NULL DEFAULT 0,
+          total_orange_money INTEGER NOT NULL DEFAULT 0,
+          total_mtn_momo INTEGER NOT NULL DEFAULT 0,
+          total_autres INTEGER NOT NULL DEFAULT 0,
+          total_credits INTEGER NOT NULL DEFAULT 0,
+          dettes_recouvrees INTEGER NOT NULL DEFAULT 0,
+          depenses_especes INTEGER NOT NULL DEFAULT 0,
+          especes_theoriques INTEGER NOT NULL DEFAULT 0,
+          especes_comptees INTEGER NOT NULL DEFAULT 0,
+          ecart INTEGER NOT NULL DEFAULT 0,
+          observations TEXT NOT NULL DEFAULT ''
+        )''');
+      await d.insert('parametres', {'cle': 'largeur_ticket', 'valeur': '80'}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await d.insert('parametres', {'cle': 'ouvrir_tiroir', 'valeur': '0'}, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
   }
 }

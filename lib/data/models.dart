@@ -9,6 +9,9 @@ class Produit {
   final int prixGros;
   final int stock;
   final int seuilAlerte;
+  final int? produitParentId;
+  final int facteurConversion;
+  final String? produitParentNom;
 
   const Produit({
     this.id,
@@ -21,6 +24,9 @@ class Produit {
     this.prixGros = 0,
     this.stock = 0,
     this.seuilAlerte = 5,
+    this.produitParentId,
+    this.facteurConversion = 1,
+    this.produitParentNom,
   });
 
   factory Produit.fromMap(Map<String, Object?> m) => Produit(
@@ -34,6 +40,9 @@ class Produit {
         prixGros: (m['prix_gros'] as int?) ?? 0,
         stock: (m['stock'] as int?) ?? 0,
         seuilAlerte: (m['seuil_alerte'] as int?) ?? 5,
+        produitParentId: m['produit_parent_id'] as int?,
+        facteurConversion: (m['facteur_conversion'] as int?) ?? 1,
+        produitParentNom: m['produit_parent_nom'] as String?,
       );
 
   /// Le stock n'est volontairement pas inclus : il ne change que par mouvements.
@@ -46,9 +55,44 @@ class Produit {
         'prix_vente': prixVente,
         'prix_gros': prixGros,
         'seuil_alerte': seuilAlerte,
+        'produit_parent_id': produitParentId,
+        'facteur_conversion': facteurConversion,
       };
 
   bool get enAlerte => stock <= seuilAlerte;
+  bool get estDeconditionne => produitParentId != null && facteurConversion > 1;
+
+  Produit copyWith({
+    int? id,
+    String? nom,
+    String? codeBarres,
+    String? categorie,
+    String? unite,
+    int? prixAchat,
+    int? prixVente,
+    int? prixGros,
+    int? stock,
+    int? seuilAlerte,
+    int? produitParentId,
+    int? facteurConversion,
+    String? produitParentNom,
+  }) {
+    return Produit(
+      id: id ?? this.id,
+      nom: nom ?? this.nom,
+      codeBarres: codeBarres ?? this.codeBarres,
+      categorie: categorie ?? this.categorie,
+      unite: unite ?? this.unite,
+      prixAchat: prixAchat ?? this.prixAchat,
+      prixVente: prixVente ?? this.prixVente,
+      prixGros: prixGros ?? this.prixGros,
+      stock: stock ?? this.stock,
+      seuilAlerte: seuilAlerte ?? this.seuilAlerte,
+      produitParentId: produitParentId ?? this.produitParentId,
+      facteurConversion: facteurConversion ?? this.facteurConversion,
+      produitParentNom: produitParentNom ?? this.produitParentNom,
+    );
+  }
 }
 
 class Client {
@@ -198,6 +242,110 @@ class Utilisateur {
       };
 }
 
+class ClotureCaisse {
+  final int? id;
+  final String date;
+  final String dateHeure;
+  final String caissierNom;
+  final int fondCaisse;
+  final int totalVentes;
+  final int nbVentes;
+  final int beneficeEstime;
+  final int totalEspeces;
+  final int totalTmoney;
+  final int totalFlooz;
+  final int totalWave;
+  final int totalOrangeMoney;
+  final int totalMtnMomo;
+  final int totalAutres;
+  final int totalCredits;
+  final int dettesRecouvrees;
+  final int depensesEspeces;
+  final int especesTheoriques;
+  final int especesComptees;
+  final int ecart;
+  final String observations;
+
+  const ClotureCaisse({
+    this.id,
+    required this.date,
+    required this.dateHeure,
+    this.caissierNom = '',
+    this.fondCaisse = 0,
+    this.totalVentes = 0,
+    this.nbVentes = 0,
+    this.beneficeEstime = 0,
+    this.totalEspeces = 0,
+    this.totalTmoney = 0,
+    this.totalFlooz = 0,
+    this.totalWave = 0,
+    this.totalOrangeMoney = 0,
+    this.totalMtnMomo = 0,
+    this.totalAutres = 0,
+    this.totalCredits = 0,
+    this.dettesRecouvrees = 0,
+    this.depensesEspeces = 0,
+    this.especesTheoriques = 0,
+    this.especesComptees = 0,
+    this.ecart = 0,
+    this.observations = '',
+  });
+
+  bool get aEcart => ecart != 0;
+  bool get estExcedent => ecart > 0;
+  bool get estDeficit => ecart < 0;
+
+  factory ClotureCaisse.fromMap(Map<String, Object?> m) => ClotureCaisse(
+        id: m['id'] as int?,
+        date: m['date'] as String,
+        dateHeure: m['date_heure'] as String,
+        caissierNom: (m['caissier_nom'] as String?) ?? '',
+        fondCaisse: (m['fond_caisse'] as int?) ?? 0,
+        totalVentes: (m['total_ventes'] as int?) ?? 0,
+        nbVentes: (m['nb_ventes'] as int?) ?? 0,
+        beneficeEstime: (m['benefice_estime'] as int?) ?? 0,
+        totalEspeces: (m['total_especes'] as int?) ?? 0,
+        totalTmoney: (m['total_tmoney'] as int?) ?? 0,
+        totalFlooz: (m['total_flooz'] as int?) ?? 0,
+        totalWave: (m['total_wave'] as int?) ?? 0,
+        totalOrangeMoney: (m['total_orange_money'] as int?) ?? 0,
+        totalMtnMomo: (m['total_mtn_momo'] as int?) ?? 0,
+        totalAutres: (m['total_autres'] as int?) ?? 0,
+        totalCredits: (m['total_credits'] as int?) ?? 0,
+        dettesRecouvrees: (m['dettes_recouvrees'] as int?) ?? 0,
+        depensesEspeces: (m['depenses_especes'] as int?) ?? 0,
+        especesTheoriques: (m['especes_theoriques'] as int?) ?? 0,
+        especesComptees: (m['especes_comptees'] as int?) ?? 0,
+        ecart: (m['ecart'] as int?) ?? 0,
+        observations: (m['observations'] as String?) ?? '',
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != null) 'id': id,
+        'date': date,
+        'date_heure': dateHeure,
+        'caissier_nom': caissierNom,
+        'fond_caisse': fondCaisse,
+        'total_ventes': totalVentes,
+        'nb_ventes': nbVentes,
+        'benefice_estime': beneficeEstime,
+        'total_especes': totalEspeces,
+        'total_tmoney': totalTmoney,
+        'total_flooz': totalFlooz,
+        'total_wave': totalWave,
+        'total_orange_money': totalOrangeMoney,
+        'total_mtn_momo': totalMtnMomo,
+        'total_autres': totalAutres,
+        'total_credits': totalCredits,
+        'dettes_recouvrees': dettesRecouvrees,
+        'depenses_especes': depensesEspeces,
+        'especes_theoriques': especesTheoriques,
+        'especes_comptees': especesComptees,
+        'ecart': ecart,
+        'observations': observations,
+      };
+}
+
 class ParametresBoutique {
   final String nomBoutique;
   final String sousTitre;
@@ -206,6 +354,8 @@ class ParametresBoutique {
   final String messageTicket;
   final String devise;
   final String logoPath;
+  final int largeurTicket; // 58 ou 80
+  final bool ouvrirTiroir; // ouverture automatique tiroir-caisse
 
   const ParametresBoutique({
     this.nomBoutique = 'Ma Boutique',
@@ -215,6 +365,8 @@ class ParametresBoutique {
     this.messageTicket = 'Merci de votre visite et à bientôt !',
     this.devise = 'F CFA',
     this.logoPath = '',
+    this.largeurTicket = 80,
+    this.ouvrirTiroir = false,
   });
 
   ParametresBoutique copyWith({
@@ -225,6 +377,8 @@ class ParametresBoutique {
     String? messageTicket,
     String? devise,
     String? logoPath,
+    int? largeurTicket,
+    bool? ouvrirTiroir,
   }) {
     return ParametresBoutique(
       nomBoutique: nomBoutique ?? this.nomBoutique,
@@ -234,6 +388,8 @@ class ParametresBoutique {
       messageTicket: messageTicket ?? this.messageTicket,
       devise: devise ?? this.devise,
       logoPath: logoPath ?? this.logoPath,
+      largeurTicket: largeurTicket ?? this.largeurTicket,
+      ouvrirTiroir: ouvrirTiroir ?? this.ouvrirTiroir,
     );
   }
 }

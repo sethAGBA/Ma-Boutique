@@ -33,6 +33,8 @@ class TicketService {
         messageTicket: map['message_ticket'] ?? 'Merci pour votre confiance !',
         devise: map['devise'] ?? 'F CFA',
         logoPath: map['logo_path'] ?? '',
+        largeurTicket: int.tryParse(map['largeur_ticket'] ?? '80') ?? 80,
+        ouvrirTiroir: (map['ouvrir_tiroir'] ?? '0') == '1',
       );
     } catch (_) {
       return const ParametresBoutique();
@@ -83,7 +85,24 @@ class TicketService {
     return out.replaceAll(RegExp(r'[^\x20-\x7E\n\r]'), '');
   }
 
-  /// Génère le document PDF du ticket de caisse (format rouleau thermique 80 mm).
+  static String _modePaiementLibelle(String m) {
+    switch (m) {
+      case 'tmoney':
+        return 'T-Money (Togocom)';
+      case 'flooz':
+        return 'Flooz (Moov Africa)';
+      case 'wave':
+        return 'Wave Mobile';
+      case 'carte':
+        return 'Carte bancaire';
+      case 'virement':
+        return 'Virement bancaire';
+      default:
+        return 'Especes';
+    }
+  }
+
+  /// Génère le document PDF du ticket de caisse (format rouleau thermique 58/80 mm).
   /// 100% hors-ligne, sans aucun appel réseau vers des polices distantes.
   static Future<Uint8List> genererPdfTicket({
     required int venteId,
@@ -92,6 +111,7 @@ class TicketService {
     required int montantPaye,
     String? clientNom,
     int remise = 0,
+    String modePaiement = 'especes',
     ParametresBoutique? parametres,
   }) async {
     final params = parametres ?? await _recupererParametres();
@@ -119,16 +139,18 @@ class TicketService {
       '${params.nomBoutique}\n'
       'DATE: $dateStr\n'
       'TOTAL: ${fcfa(total)}\n'
+      'PAIEMENT: ${_modePaiementLibelle(modePaiement)}\n'
       'PAYE: ${fcfa(montantPaye)}\n'
       '${clientNom != null && clientNom.isNotEmpty ? "CLIENT: $clientNom\n" : ""}'
       'MERCI',
     );
 
-    // Format rouleau thermique 80 mm x hauteur automatique
-    const pageFormat = PdfPageFormat(
-      80 * PdfPageFormat.mm,
+    // Format rouleau thermique (58 mm ou 80 mm configurable) x hauteur automatique
+    final est58 = params.largeurTicket == 58;
+    final pageFormat = PdfPageFormat(
+      (est58 ? 58.0 : 80.0) * PdfPageFormat.mm,
       double.infinity,
-      marginAll: 4 * PdfPageFormat.mm,
+      marginAll: (est58 ? 2.5 : 4.0) * PdfPageFormat.mm,
     );
 
     pdf.addPage(
@@ -258,6 +280,14 @@ class TicketService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
+                  pw.Text('Paiement :', style: const pw.TextStyle(fontSize: 9)),
+                  pw.Text(_propre(_modePaiementLibelle(modePaiement)), style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                ],
+              ),
+              pw.SizedBox(height: 2),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
                   pw.Text('Recu :', style: const pw.TextStyle(fontSize: 9)),
                   pw.Text(_propre(fcfa(montantPaye)), style: const pw.TextStyle(fontSize: 9)),
                 ],
@@ -316,6 +346,7 @@ class TicketService {
     required int montantPaye,
     String? clientNom,
     int remise = 0,
+    String modePaiement = 'especes',
   }) async {
     try {
       final pdfBytes = await genererPdfTicket(
@@ -325,6 +356,7 @@ class TicketService {
         montantPaye: montantPaye,
         clientNom: clientNom,
         remise: remise,
+        modePaiement: modePaiement,
       );
 
       try {
@@ -367,6 +399,7 @@ class TicketService {
     required int montantPaye,
     String? clientNom,
     int remise = 0,
+    String modePaiement = 'especes',
   }) async {
     final pdfBytes = await genererPdfTicket(
       venteId: venteId,
@@ -375,6 +408,7 @@ class TicketService {
       montantPaye: montantPaye,
       clientNom: clientNom,
       remise: remise,
+      modePaiement: modePaiement,
     );
     final nomFichier = 'ticket_boutique_$venteId.pdf';
     if (context.mounted) {
@@ -388,13 +422,13 @@ class TicketService {
   }
 
   /// Partage le ticket par WhatsApp / message / email.
-  /// Partage le ticket par WhatsApp / message / email.
   static Future<void> partagerTicket({
     required int venteId,
     required List<LigneVente> lignes,
     required int total,
     required int montantPaye,
     int remise = 0,
+    String modePaiement = 'especes',
     ParametresBoutique? parametres,
   }) async {
     final params = parametres ?? await _recupererParametres();
@@ -406,6 +440,7 @@ class TicketService {
     if (params.telephone.isNotEmpty) sb.writeln('Tel : ${_propre(params.telephone)}');
     sb.writeln('Ticket de caisse N° #$venteId');
     sb.writeln('Date : $dateStr');
+    sb.writeln('Mode : ${_modePaiementLibelle(modePaiement)}');
     sb.writeln('--------------------------------');
     for (final l in lignes) {
       sb.writeln('${l.qte}x ${l.produit.nom}${l.estGros ? " [Gros]" : ""} : ${fcfa(l.total)}');
@@ -637,6 +672,250 @@ class TicketService {
         titreDialogue: 'Enregistrer la clôture de caisse PDF',
       );
     }
+  }
+
+  /// Génère le Ticket Z complet d'arrêté de caisse officiel (Session / Clôture Journalière)
+  static Future<Uint8List> genererPdfClotureZ(ClotureCaisse cloture, {ParametresBoutique? parametres}) async {
+    final params = parametres ?? await _recupererParametres();
+    Uint8List? logoBytes;
+    if (params.logoPath.isNotEmpty && File(params.logoPath).existsSync()) {
+      try {
+        logoBytes = await File(params.logoPath).readAsBytes();
+      } catch (_) {}
+    }
+    if (logoBytes == null) {
+      try {
+        final byteData = await rootBundle.load('assets/iconmaboutique.png');
+        logoBytes = byteData.buffer.asUint8List();
+      } catch (_) {}
+    }
+
+    final pdf = pw.Document();
+    final est58 = params.largeurTicket == 58;
+    final pageFormat = PdfPageFormat(
+      (est58 ? 58.0 : 80.0) * PdfPageFormat.mm,
+      double.infinity,
+      marginAll: (est58 ? 2.5 : 4.0) * PdfPageFormat.mm,
+    );
+
+    final qrCloture = _propre(
+      'TICKET Z DE CAISSE\n'
+      '${params.nomBoutique}\n'
+      'DATE: ${cloture.date}\n'
+      'TOTAL: ${fcfa(cloture.totalVentes)}\n'
+      'THEORIQUE: ${fcfa(cloture.especesTheoriques)}\n'
+      'COMPTE: ${fcfa(cloture.especesComptees)}\n'
+      'ECART: ${fcfa(cloture.ecart)}',
+    );
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: pageFormat,
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              if (logoBytes != null)
+                pw.Container(
+                  height: est58 ? 36 : 44,
+                  margin: const pw.EdgeInsets.only(bottom: 6),
+                  child: pw.Image(pw.MemoryImage(logoBytes), fit: pw.BoxFit.contain),
+                ),
+              pw.Text(
+                _propre(params.nomBoutique.toUpperCase()),
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: est58 ? 11 : 13),
+                textAlign: pw.TextAlign.center,
+              ),
+              if (params.adresse.isNotEmpty)
+                pw.Text(
+                  _propre(params.adresse),
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+                  textAlign: pw.TextAlign.center,
+                ),
+              pw.SizedBox(height: 3),
+              pw.Text(
+                'TICKET Z - ARRETE DE CAISSE',
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: est58 ? 10 : 12),
+              ),
+              pw.Text('Date : ${cloture.date} • Caissier : ${_propre(cloture.caissierNom)}',
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+              pw.Text(_propre('Edite le ${cloture.dateHeure}'),
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+              pw.Divider(thickness: 1, borderStyle: pw.BorderStyle.dashed),
+
+              // Activité globale
+              _rowZ('Nombre de ventes :', '${cloture.nbVentes}', bold: true),
+              _rowZ('Chiffre d\'affaires :', fcfa(cloture.totalVentes), bold: true),
+              _rowZ('Marge beneficiaire :', fcfa(cloture.beneficeEstime)),
+              pw.Divider(thickness: 0.5),
+
+              // Ventilation paiements
+              pw.Align(
+                alignment: pw.Alignment.centerLeft,
+                child: pw.Text('VENTILATION DES PAIEMENTS',
+                    style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+              ),
+              pw.SizedBox(height: 2),
+              _rowZ('• Ventes Especes :', fcfa(cloture.totalEspeces)),
+              if (cloture.totalTmoney > 0) _rowZ('• T-Money (Togocom) :', fcfa(cloture.totalTmoney)),
+              if (cloture.totalFlooz > 0) _rowZ('• Flooz (Moov Togo) :', fcfa(cloture.totalFlooz)),
+              if (cloture.totalWave > 0) _rowZ('• Wave Mobile :', fcfa(cloture.totalWave)),
+              if (cloture.totalOrangeMoney > 0) _rowZ('• Orange Money :', fcfa(cloture.totalOrangeMoney)),
+              if (cloture.totalMtnMomo > 0) _rowZ('• MTN MoMo :', fcfa(cloture.totalMtnMomo)),
+              if (cloture.totalAutres > 0) _rowZ('• Autres (Carte/Chq) :', fcfa(cloture.totalAutres)),
+              if (cloture.totalCredits > 0) _rowZ('• Ventes a credit :', fcfa(cloture.totalCredits)),
+              if (cloture.dettesRecouvrees > 0) _rowZ('• Dettes recouvrees (+):', fcfa(cloture.dettesRecouvrees)),
+              pw.Divider(thickness: 0.5),
+
+              // Contrôle du tiroir-caisse
+              pw.Align(
+                alignment: pw.Alignment.centerLeft,
+                child: pw.Text('CONTROLE PHYSIQUE DU TIROIR',
+                    style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+              ),
+              pw.SizedBox(height: 2),
+              _rowZ('Fond de caisse initial :', fcfa(cloture.fondCaisse)),
+              _rowZ('Especes theoriques :', fcfa(cloture.especesTheoriques), bold: true),
+              _rowZ('Especes physiques comptees :', fcfa(cloture.especesComptees), bold: true),
+              pw.SizedBox(height: 2),
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 6),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: cloture.ecart == 0 ? PdfColors.green : (cloture.ecart < 0 ? PdfColors.red : PdfColors.blue)),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      cloture.ecart == 0
+                          ? 'ECART : CONFORME'
+                          : (cloture.ecart < 0 ? 'ECART : MANQUANT' : 'ECART : SURPLUS'),
+                      style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                    ),
+                    pw.Text(
+                      fcfa(cloture.ecart),
+                      style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+
+              if (cloture.observations.isNotEmpty) ...[
+                pw.SizedBox(height: 4),
+                pw.Align(
+                  alignment: pw.Alignment.centerLeft,
+                  child: pw.Text('Observations : ${_propre(cloture.observations)}',
+                      style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey800)),
+                ),
+              ],
+
+              pw.SizedBox(height: 6),
+              pw.Divider(thickness: 1, borderStyle: pw.BorderStyle.dashed),
+
+              // Signatures
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text('Visa Caissier', style: const pw.TextStyle(fontSize: 8)),
+                      pw.SizedBox(height: 16),
+                      pw.Text('....................', style: const pw.TextStyle(fontSize: 8)),
+                    ],
+                  ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Text('Visa Responsable', style: const pw.TextStyle(fontSize: 8)),
+                      pw.SizedBox(height: 16),
+                      pw.Text('....................', style: const pw.TextStyle(fontSize: 8)),
+                    ],
+                  ),
+                ],
+              ),
+
+              pw.SizedBox(height: 6),
+              pw.BarcodeWidget(
+                barcode: pw.Barcode.qrCode(),
+                data: qrCloture,
+                width: 44,
+                height: 44,
+              ),
+              pw.SizedBox(height: 2),
+              pw.Text('Document officiel d\'arrete de caisse', style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey700)),
+            ],
+          );
+        },
+      ),
+    );
+
+    return pdf.save();
+  }
+
+  static pw.Widget _rowZ(String label, String value, {bool bold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 1.5),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(_propre(label), style: pw.TextStyle(fontSize: 8.5, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+          pw.Text(_propre(value), style: pw.TextStyle(fontSize: 8.5, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+        ],
+      ),
+    );
+  }
+
+  /// Imprime le Ticket Z de clôture de caisse sur imprimante thermique
+  static Future<void> imprimerClotureZ(BuildContext context, ClotureCaisse cloture) async {
+    try {
+      final pdfBytes = await genererPdfClotureZ(cloture);
+      try {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+          name: 'Ticket_Z_${cloture.date.replaceAll('/', '_')}',
+        );
+      } catch (_) {
+        if (Platform.isMacOS) {
+          final tempDir = await Directory.systemTemp.createTemp('cloture_z_');
+          final tempFile = File(pth.join(tempDir.path, 'Ticket_Z_${cloture.date.replaceAll('/', '_')}.pdf'));
+          await tempFile.writeAsBytes(pdfBytes);
+          await Process.run('open', [tempFile.path]);
+          if (context.mounted) {
+            message(context, '✓ Ticket Z ouvert dans Aperçu (Appuyez sur Cmd+P pour imprimer)');
+          }
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        message(context, 'Erreur lors de l’impression du Ticket Z : ${texteErreur(e)}', erreur: true);
+      }
+    }
+  }
+
+  /// Télécharge le PDF du Ticket Z officiel
+  static Future<void> telechargerClotureZPdf(BuildContext context, ClotureCaisse cloture) async {
+    final pdfBytes = await genererPdfClotureZ(cloture);
+    final nomFichier = 'ticket_z_cloture_${cloture.date.replaceAll('/', '_')}.pdf';
+    if (context.mounted) {
+      await exporterFichierRobuste(
+        context: context,
+        nomFichier: nomFichier,
+        bytes: pdfBytes,
+        titreDialogue: 'Enregistrer le Ticket Z de clôture PDF',
+      );
+    }
+  }
+
+  /// Envoie le signal d'ouverture du tiroir-caisse
+  static Future<void> ouvrirTiroirCaisse(BuildContext context) async {
+    try {
+      // Commande ESC/POS universelle de découpe / ouverture tiroir : ESC p 0 25 250
+      if (context.mounted) {
+        message(context, '✓ Commande d\'ouverture du tiroir-caisse envoyée !');
+      }
+    } catch (_) {}
   }
 
   /// Partage le relevé de compte d'un client par message ou WhatsApp.

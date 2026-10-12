@@ -91,6 +91,23 @@ class _ProduitsPageState extends State<ProduitsPage> {
     switch (a) {
       case 'entree':
         await _entreeRapide(p);
+      case 'deconditionner':
+        final nb = await demanderNombre(
+          context,
+          titre: 'Déconditionner : ${p.nom}',
+          label: 'Nombre de cartons parents à ouvrir',
+          initial: 1,
+        );
+        if (nb != null && nb > 0 && mounted) {
+          try {
+            await repo.deconditionnerProduit(produitDetailId: p.id!, nbCartons: nb);
+            if (mounted) {
+              message(context, '✓ $nb carton(s) ouvert(s) : +${nb * p.facteurConversion} ${p.unite}(s) au stock !');
+            }
+          } catch (e) {
+            if (mounted) message(context, texteErreur(e), erreur: true);
+          }
+        }
       case 'ajuster':
         final n = await demanderNombre(
           context,
@@ -375,6 +392,21 @@ class _ProduitsPageState extends State<ProduitsPage> {
                             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFB45309)),
                           ),
                         ],
+                        if (p.estDeconditionne) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: const Color(0xFFFCD34D)),
+                            ),
+                            child: Text(
+                              '📦 ${p.produitParentNom ?? "Carton"} (x${p.facteurConversion})',
+                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF92400E)),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -430,8 +462,19 @@ class _ProduitsPageState extends State<ProduitsPage> {
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF64748B)),
                 onSelected: (a) => _action(a, p),
-                itemBuilder: (_) => const [
-                  PopupMenuItem(
+                itemBuilder: (_) => [
+                  if (p.estDeconditionne)
+                    PopupMenuItem(
+                      value: 'deconditionner',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.unarchive_rounded, size: 20, color: Color(0xFFD97706)),
+                          const SizedBox(width: 10),
+                          Text('Ouvrir carton (+${p.facteurConversion} ${p.unite})'),
+                        ],
+                      ),
+                    ),
+                  const PopupMenuItem(
                     value: 'ajuster',
                     child: Row(
                       children: [
@@ -441,7 +484,7 @@ class _ProduitsPageState extends State<ProduitsPage> {
                       ],
                     ),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem(
                     value: 'supprimer',
                     child: Row(
                       children: [
@@ -471,7 +514,9 @@ class _ProduitForm extends StatefulWidget {
 
 class _ProduitFormState extends State<_ProduitForm> {
   final _cle = GlobalKey<FormState>();
-  late final TextEditingController _nom, _code, _cat, _unite, _achat, _vente, _gros, _stock, _seuil;
+  late final TextEditingController _nom, _code, _cat, _unite, _achat, _vente, _gros, _stock, _seuil, _facteurConversion;
+  int? _produitParentId;
+  List<Produit> _produitsDisponibles = [];
 
   @override
   void initState() {
@@ -486,11 +531,21 @@ class _ProduitFormState extends State<_ProduitForm> {
     _gros = TextEditingController(text: p == null ? '' : (p.prixGros > 0 ? '${p.prixGros}' : ''));
     _stock = TextEditingController(text: '0');
     _seuil = TextEditingController(text: '${p?.seuilAlerte ?? 5}');
+    _produitParentId = p?.produitParentId;
+    _facteurConversion = TextEditingController(text: '${p?.facteurConversion ?? 1}');
+
+    context.read<Repo>().produits().then((list) {
+      if (mounted) {
+        setState(() {
+          _produitsDisponibles = list.where((prod) => prod.id != widget.produit?.id).toList();
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
-    for (final c in [_nom, _code, _cat, _unite, _achat, _vente, _gros, _stock, _seuil]) {
+    for (final c in [_nom, _code, _cat, _unite, _achat, _vente, _gros, _stock, _seuil, _facteurConversion]) {
       c.dispose();
     }
     super.dispose();
@@ -525,6 +580,7 @@ class _ProduitFormState extends State<_ProduitForm> {
 
   void _enregistrer() {
     if (!_cle.currentState!.validate()) return;
+    final conv = toInt(_facteurConversion.text);
     final p = Produit(
       id: widget.produit?.id,
       nom: _nom.text.trim(),
@@ -535,6 +591,8 @@ class _ProduitFormState extends State<_ProduitForm> {
       prixVente: toInt(_vente.text),
       prixGros: toInt(_gros.text),
       seuilAlerte: toInt(_seuil.text),
+      produitParentId: _produitParentId,
+      facteurConversion: conv > 0 ? conv : 1,
     );
     Navigator.pop(context, (p, toInt(_stock.text)));
   }
@@ -548,12 +606,13 @@ class _ProduitFormState extends State<_ProduitForm> {
         style: const TextStyle(fontWeight: FontWeight.w700),
       ),
       content: SizedBox(
-        width: 460,
+        width: 480,
         child: Form(
           key: _cle,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _champ(_nom, 'Nom du produit *', requis: true, autofocus: true, hint: 'Ex: Savon Sunlight, Huile 1L...'),
                 Row(
@@ -582,6 +641,58 @@ class _ProduitFormState extends State<_ProduitForm> {
                   ],
                 ),
                 _champ(_code, 'Code-barres (facultatif)', hint: 'Scannez avec la douchette'),
+
+                // Liaison multi-conditionnement / déconditionnement carton
+                Container(
+                  margin: const EdgeInsets.only(top: 4, bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.inventory_2_rounded, size: 18, color: Color(0xFFD97706)),
+                          SizedBox(width: 8),
+                          Text('Liaison Carton / Déconditionnement', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Si cet article est vendu au détail issu d’un carton parent (ex: paquet de spaghetti issu du carton Bonita) :',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<int?>(
+                        initialValue: _produitParentId,
+                        decoration: const InputDecoration(
+                          labelText: 'Carton parent de réserve (facultatif)',
+                          prefixIcon: Icon(Icons.archive_rounded),
+                        ),
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('Aucun parent (article indépendant)')),
+                          for (final prod in _produitsDisponibles)
+                            DropdownMenuItem(value: prod.id, child: Text('${prod.nom} (${prod.stock} en stock)')),
+                        ],
+                        onChanged: (val) => setState(() => _produitParentId = val),
+                      ),
+                      if (_produitParentId != null) ...[
+                        const SizedBox(height: 8),
+                        _champ(
+                          _facteurConversion,
+                          'Nombre d’unités contenues dans 1 carton *',
+                          nombre: true,
+                          requis: true,
+                          hint: 'Ex: 20 paquets par carton',
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ],
             ),
           ),

@@ -66,6 +66,66 @@ class _CaissePageState extends State<CaissePage> {
     });
   }
 
+  Future<void> _verifierEtAjouter(Produit p, {int qte = 1, bool estGros = false}) async {
+    if (qte <= 0) return;
+    final repo = context.read<Repo>();
+    if (p.stock <= 0 && p.estDeconditionne) {
+      final ouvrir = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.inventory_2_rounded, color: Color(0xFFD97706)),
+              SizedBox(width: 8),
+              Text('Déconditionnement Stock'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Le stock au détail de « ${p.nom} » est épuisé (0 ${p.unite}).'),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFCD34D)),
+                ),
+                child: Text(
+                  'Ouvrir 1 carton de réserve « ${p.produitParentNom ?? 'carton parent'} » pour ajouter +${p.facteurConversion} ${p.unite}(s) au stock ?',
+                  style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF92400E)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Vendre sans ouvrir'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.unarchive_rounded, size: 18),
+              label: Text('Ouvrir 1 carton (+${p.facteurConversion})'),
+            ),
+          ],
+        ),
+      );
+      if (ouvrir == true && mounted) {
+        try {
+          await repo.deconditionnerProduit(produitDetailId: p.id!, nbCartons: 1);
+          if (mounted) message(context, '✓ 1 carton ouvert : +${p.facteurConversion} ${p.unite}(s) disponibles !');
+        } catch (e) {
+          if (mounted) message(context, texteErreur(e), erreur: true);
+        }
+      }
+    }
+    _ajouter(p, qte: qte, estGros: estGros);
+  }
+
   Future<void> _ajouterAvecQuantite(Produit p) async {
     final n = await demanderNombre(
       context,
@@ -74,7 +134,7 @@ class _CaissePageState extends State<CaissePage> {
       initial: 1,
     );
     if (n != null && n > 0 && mounted) {
-      _ajouter(p, qte: n);
+      await _verifierEtAjouter(p, qte: n);
     }
   }
 
@@ -114,7 +174,7 @@ class _CaissePageState extends State<CaissePage> {
     final p = await context.read<Repo>().parCodeBarres(code);
     if (!mounted) return;
     if (p != null) {
-      _ajouter(p, qte: quantite);
+      await _verifierEtAjouter(p, qte: quantite);
       _q.clear();
       setState(() => _query = '');
     }
@@ -241,7 +301,7 @@ class _CaissePageState extends State<CaissePage> {
 
   Future<void> _encaisser() async {
     final repo = context.read<Repo>();
-    final r = await showDialog<(int, int?)>(
+    final r = await showDialog<(int, int?, String)>(
       context: context,
       builder: (_) => _PaiementDialog(total: _total),
     );
@@ -250,13 +310,17 @@ class _CaissePageState extends State<CaissePage> {
     final copiePanier = List<LigneVente>.from(_panier);
     final totalVente = _total;
     final remiseVente = _remise;
+    final montantPaye = r.$1;
+    final clientId = r.$2;
+    final modePaiement = r.$3;
 
     try {
       final venteId = await repo.enregistrerVente(
         copiePanier,
-        montantPaye: r.$1,
-        clientId: r.$2,
+        montantPaye: montantPaye,
+        clientId: clientId,
         remise: remiseVente,
+        modePaiement: modePaiement,
       );
       if (!mounted) return;
       setState(() {
@@ -266,6 +330,13 @@ class _CaissePageState extends State<CaissePage> {
       _q.clear();
       _focus.requestFocus();
 
+      // Impulsion d'ouverture automatique du tiroir-caisse si espèces et activé dans les réglages
+      final params = await repo.chargerParametres();
+      if (params.ouvrirTiroir && modePaiement == 'especes' && mounted) {
+        TicketService.ouvrirTiroirCaisse(context);
+      }
+
+      if (!mounted) return;
       // Afficher le reçu de vente / ticket de caisse
       await showDialog<void>(
         context: context,
@@ -273,14 +344,22 @@ class _CaissePageState extends State<CaissePage> {
           venteId: venteId,
           lignes: copiePanier,
           total: totalVente,
-          montantPaye: r.$1,
-          clientId: r.$2,
+          montantPaye: montantPaye,
+          clientId: clientId,
           remise: remiseVente,
+          modePaiement: modePaiement,
         ),
       );
     } catch (e) {
       if (mounted) message(context, texteErreur(e), erreur: true);
     }
+  }
+
+  Future<void> _ouvrirClotureZ() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => const _ClotureZDialog(),
+    );
   }
 
   @override
@@ -318,6 +397,20 @@ class _CaissePageState extends State<CaissePage> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Ouvrir tiroir-caisse (impulsion)',
+            icon: const Icon(Icons.point_of_sale_rounded),
+            onPressed: () => TicketService.ouvrirTiroirCaisse(context),
+          ),
+          const SizedBox(width: 4),
+          FilledButton.tonalIcon(
+            onPressed: _ouvrirClotureZ,
+            icon: const Icon(Icons.receipt_long_rounded, size: 18),
+            label: const Text('Clôture (Z)'),
+          ),
+          const SizedBox(width: 12),
+        ],
       ),
       body: large
           ? Row(
@@ -463,7 +556,7 @@ class _CaissePageState extends State<CaissePage> {
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _ajouter(p),
+        onTap: () => _verifierEtAjouter(p),
         onLongPress: () => _ajouterAvecQuantite(p),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -904,7 +997,8 @@ class _CaissePageState extends State<CaissePage> {
   }
 }
 
-/// Fenêtre d'encaissement moderne : montant reçu, monnaie à rendre, ou reste à crédit.
+/// Fenêtre d'encaissement moderne adaptée au marché togolais :
+/// Espèces, T-Money (Togocom), Flooz (Moov Togo), Wave Mobile, Vente à crédit.
 class _PaiementDialog extends StatefulWidget {
   final int total;
   const _PaiementDialog({required this.total});
@@ -917,6 +1011,7 @@ class _PaiementDialogState extends State<_PaiementDialog> {
   late final TextEditingController _c = TextEditingController(text: '${widget.total}');
   List<Client> _clients = [];
   int? _clientId;
+  String _mode = 'especes'; // especes, tmoney, flooz, wave, carte
 
   int get _recu => toInt(_c.text);
 
@@ -948,7 +1043,7 @@ class _PaiementDialogState extends State<_PaiementDialog> {
       title: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Text('Règlement', style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text('Règlement Vente', style: TextStyle(fontWeight: FontWeight.w700)),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -967,53 +1062,197 @@ class _PaiementDialogState extends State<_PaiementDialog> {
         ],
       ),
       content: SizedBox(
-        width: 420,
+        width: 440,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Choix du mode de paiement (Togo)
+              const Text('Moyen de paiement :', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  ChoiceChip(
+                    avatar: const Icon(Icons.payments_rounded, size: 16),
+                    label: const Text('Espèces (Cash)'),
+                    selected: _mode == 'especes',
+                    onSelected: (s) {
+                      if (s) setState(() => _mode = 'especes');
+                    },
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.phone_android_rounded, size: 16, color: Color(0xFFEAB308)),
+                    label: const Text('T-Money (Togocom)'),
+                    selected: _mode == 'tmoney',
+                    onSelected: (s) {
+                      if (s) {
+                        setState(() {
+                          _mode = 'tmoney';
+                          _c.text = '$total';
+                        });
+                      }
+                    },
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.mobile_friendly_rounded, size: 16, color: Color(0xFF0284C7)),
+                    label: const Text('Flooz (Moov Togo)'),
+                    selected: _mode == 'flooz',
+                    onSelected: (s) {
+                      if (s) {
+                        setState(() {
+                          _mode = 'flooz';
+                          _c.text = '$total';
+                        });
+                      }
+                    },
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.waves_rounded, size: 16, color: Color(0xFF2563EB)),
+                    label: const Text('Wave Mobile'),
+                    selected: _mode == 'wave',
+                    onSelected: (s) {
+                      if (s) {
+                        setState(() {
+                          _mode = 'wave';
+                          _c.text = '$total';
+                        });
+                      }
+                    },
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.credit_card_rounded, size: 16),
+                    label: const Text('Carte / Autre'),
+                    selected: _mode == 'carte',
+                    onSelected: (s) {
+                      if (s) {
+                        setState(() {
+                          _mode = 'carte';
+                          _c.text = '$total';
+                        });
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // Bannière d'information spécifique Mobile Money Togo
+              if (_mode == 'tmoney')
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEFCE8),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFFE0000).withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.phone_android_rounded, color: Color(0xFFD97706), size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Paiement T-Money (Togocom) : Vérifiez la réception du SMS ou USSD *145#.',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF92400E)),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else if (_mode == 'flooz')
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F9FF),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF0284C7).withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.mobile_friendly_rounded, color: Color(0xFF0284C7), size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Paiement Flooz (Moov Africa Togo) : Confirmez le virement via le menu *155#.',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0369A1)),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else if (_mode == 'wave')
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.waves_rounded, color: Color(0xFF2563EB), size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Paiement Wave : Transfert direct instantané sans frais.',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1D4ED8)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               // Saisie du montant reçu
               TextField(
                 controller: _c,
-                autofocus: true,
+                autofocus: _mode == 'especes',
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Montant reçu par le client',
+                decoration: InputDecoration(
+                  labelText: _mode == 'especes' ? 'Montant remis par le client' : 'Montant perçu (${_mode.toUpperCase()})',
                   suffixText: 'F CFA',
-                  prefixIcon: Icon(Icons.attach_money_rounded),
+                  prefixIcon: const Icon(Icons.attach_money_rounded),
                 ),
                 onChanged: (_) => setState(() {}),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
 
-              // Raccourcis billets de banque courants
-              const Text('Coupures rapides :', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ActionChip(
-                    avatar: const Icon(Icons.done_all, size: 16),
-                    label: const Text('Exact'),
-                    onPressed: () => _fixer(total),
-                  ),
-                  for (final v in const [500, 1000, 2000, 5000, 10000, 20000])
+              // Coupures rapides pour les espèces au Togo
+              if (_mode == 'especes') ...[
+                const Text('Coupures rapides F CFA :', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
                     ActionChip(
-                      label: Text(fcfa(v)),
-                      onPressed: () => _fixer(v),
+                      avatar: const Icon(Icons.done_all, size: 16),
+                      label: const Text('Exact'),
+                      onPressed: () => _fixer(total),
                     ),
-                ],
-              ),
-              const SizedBox(height: 16),
+                    for (final v in const [500, 1000, 2000, 5000, 10000, 20000])
+                      ActionChip(
+                        label: Text(fcfa(v)),
+                        onPressed: () => _fixer(v),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
 
               // Résultat : Monnaie à rendre OU Dette à crédit
               if (!credit)
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: const Color(0xFFDCFCE7),
                     borderRadius: BorderRadius.circular(12),
@@ -1021,15 +1260,15 @@ class _PaiementDialogState extends State<_PaiementDialog> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.monetization_on_rounded, color: Color(0xFF16A34A), size: 28),
-                      const SizedBox(width: 12),
+                      const Icon(Icons.monetization_on_rounded, color: Color(0xFF16A34A), size: 26),
+                      const SizedBox(width: 10),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text('Monnaie à rendre', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF166534))),
                           Text(
                             fcfa(recu - total),
-                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF166534)),
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF166534)),
                           ),
                         ],
                       ),
@@ -1039,7 +1278,7 @@ class _PaiementDialogState extends State<_PaiementDialog> {
               else ...[
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFEF3C7),
                     borderRadius: BorderRadius.circular(12),
@@ -1047,22 +1286,22 @@ class _PaiementDialogState extends State<_PaiementDialog> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706), size: 28),
-                      const SizedBox(width: 12),
+                      const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706), size: 26),
+                      const SizedBox(width: 10),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text('Reste à crédit (dette client)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF92400E))),
                           Text(
                             fcfa(total - recu),
-                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF92400E)),
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF92400E)),
                           ),
                         ],
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 DropdownButtonFormField<int>(
                   initialValue: _clientId,
                   decoration: const InputDecoration(
@@ -1076,7 +1315,7 @@ class _PaiementDialogState extends State<_PaiementDialog> {
                 ),
                 if (_clients.isEmpty)
                   const Padding(
-                    padding: EdgeInsets.only(top: 8),
+                    padding: EdgeInsets.only(top: 6),
                     child: Text(
                       '⚠️ Aucun client enregistré. Ajoutez un client dans l’onglet Clients.',
                       style: TextStyle(fontSize: 12, color: Colors.red),
@@ -1090,7 +1329,7 @@ class _PaiementDialogState extends State<_PaiementDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
         FilledButton(
-          onPressed: peutValider ? () => Navigator.pop(context, (recu, _clientId)) : null,
+          onPressed: peutValider ? () => Navigator.pop(context, (recu, _clientId, _mode)) : null,
           child: const Text('Valider la vente'),
         ),
       ],
@@ -1098,7 +1337,7 @@ class _PaiementDialogState extends State<_PaiementDialog> {
   }
 }
 
-/// Ticket de caisse numérique élégant avec récapitulatif et partage WhatsApp / texte.
+/// Ticket de caisse numérique élégant avec récapitulatif et options d'impression / partage.
 class _TicketDialog extends StatelessWidget {
   final int venteId;
   final List<LigneVente> lignes;
@@ -1106,6 +1345,7 @@ class _TicketDialog extends StatelessWidget {
   final int montantPaye;
   final int? clientId;
   final int remise;
+  final String modePaiement;
 
   const _TicketDialog({
     required this.venteId,
@@ -1114,7 +1354,23 @@ class _TicketDialog extends StatelessWidget {
     required this.montantPaye,
     this.clientId,
     this.remise = 0,
+    this.modePaiement = 'especes',
   });
+
+  String _modeLabel(String m) {
+    switch (m) {
+      case 'tmoney':
+        return 'T-Money (Togocom)';
+      case 'flooz':
+        return 'Flooz (Moov Togo)';
+      case 'wave':
+        return 'Wave Mobile';
+      case 'carte':
+        return 'Carte bancaire';
+      default:
+        return 'Espèces';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1127,7 +1383,7 @@ class _TicketDialog extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       contentPadding: const EdgeInsets.all(20),
       content: SizedBox(
-        width: 360,
+        width: 380,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1144,7 +1400,7 @@ class _TicketDialog extends StatelessWidget {
                 'Ticket N° #$venteId • $dateStr',
                 style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
               // Conteneur style ticket de caisse
               Container(
@@ -1210,6 +1466,14 @@ class _TicketDialog extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
+                        const Text('Mode', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                        Text(_modeLabel(modePaiement), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF2563EB))),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
                         const Text('Reçu', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                         Text(fcfa(montantPaye), style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                       ],
@@ -1251,9 +1515,10 @@ class _TicketDialog extends StatelessWidget {
                 total: total,
                 montantPaye: montantPaye,
                 remise: remise,
+                modePaiement: modePaiement,
               ),
               icon: const Icon(Icons.print_rounded, size: 18),
-              label: const Text('Imprimer'),
+              label: const Text('Imprimer (ESC/POS)'),
             ),
             OutlinedButton.icon(
               onPressed: () => TicketService.telechargerPdf(
@@ -1263,6 +1528,7 @@ class _TicketDialog extends StatelessWidget {
                 total: total,
                 montantPaye: montantPaye,
                 remise: remise,
+                modePaiement: modePaiement,
               ),
               icon: const Icon(Icons.download_rounded, size: 18),
               label: const Text('Télécharger PDF'),
@@ -1274,6 +1540,7 @@ class _TicketDialog extends StatelessWidget {
                 total: total,
                 montantPaye: montantPaye,
                 remise: remise,
+                modePaiement: modePaiement,
               ),
               icon: const Icon(Icons.share_rounded, size: 18),
               label: const Text('Partager'),
@@ -1285,6 +1552,375 @@ class _TicketDialog extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// Boîte de dialogue de Clôture de Caisse Journalière & Ticket Z.
+/// Permet le comptage des espèces, le calcul de l'écart de caisse et l'impression du Ticket Z.
+class _ClotureZDialog extends StatefulWidget {
+  const _ClotureZDialog();
+
+  @override
+  State<_ClotureZDialog> createState() => _ClotureZDialogState();
+}
+
+class _ClotureZDialogState extends State<_ClotureZDialog> {
+  ClotureCaisse? _cloture;
+  late final TextEditingController _fondCtrl = TextEditingController(text: '0');
+  late final TextEditingController _compteesCtrl = TextEditingController(text: '0');
+  late final TextEditingController _obsCtrl = TextEditingController();
+  bool _chargement = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _chargerDonnees();
+  }
+
+  @override
+  void dispose() {
+    _fondCtrl.dispose();
+    _compteesCtrl.dispose();
+    _obsCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _chargerDonnees() async {
+    final repo = context.read<Repo>();
+    final fond = await repo.getFondCaisseDuJour();
+    _fondCtrl.text = '$fond';
+
+    final c = await repo.calculerBilanCloture(
+      fondCaisse: fond,
+      caissierNom: repo.utilisateurActif?.nom ?? 'Caisse Principale',
+    );
+    if (!mounted) return;
+    setState(() {
+      _cloture = c;
+      _compteesCtrl.text = '${c.especesTheoriques}';
+      _chargement = false;
+    });
+  }
+
+  Future<void> _recalculer() async {
+    final repo = context.read<Repo>();
+    final fond = toInt(_fondCtrl.text);
+    await repo.setFondCaisseDuJour(fond);
+
+    final comptees = toInt(_compteesCtrl.text);
+    final c = await repo.calculerBilanCloture(
+      fondCaisse: fond,
+      caissierNom: repo.utilisateurActif?.nom ?? 'Caisse Principale',
+      especesComptees: comptees,
+      observations: _obsCtrl.text.trim(),
+    );
+    if (mounted) setState(() => _cloture = c);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_chargement || _cloture == null) {
+      return const AlertDialog(
+        content: SizedBox(
+          height: 160,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    final c = _cloture!;
+    final ecart = c.ecart;
+
+    return AlertDialog(
+      title: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.receipt_long_rounded, color: Color(0xFF1E293B)),
+              SizedBox(width: 8),
+              Text('Clôture de Caisse (Ticket Z)', style: TextStyle(fontWeight: FontWeight.w800)),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${c.date} • ${c.caissierNom}',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 540,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Synthèse des ventes
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Chiffre d’affaires du jour', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                          const SizedBox(height: 2),
+                          Text(
+                            fcfa(c.totalVentes),
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Nombre de ventes', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${c.nbVentes} transaction(s)',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Ventilation des règlements (Spécifique Togo)
+              const Text('Ventilation des paiements (Togo) :', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _modeCard('Espèces en caisse', fcfa(c.totalEspeces), Icons.payments_rounded, const Color(0xFF16A34A)),
+                  _modeCard('T-Money (Togocom)', fcfa(c.totalTmoney), Icons.phone_android_rounded, const Color(0xFFD97706)),
+                  _modeCard('Flooz (Moov Togo)', fcfa(c.totalFlooz), Icons.mobile_friendly_rounded, const Color(0xFF0284C7)),
+                  _modeCard('Wave Mobile', fcfa(c.totalWave), Icons.waves_rounded, const Color(0xFF2563EB)),
+                  if (c.totalAutres > 0)
+                    _modeCard('Autres (Carte/Vir.)', fcfa(c.totalAutres), Icons.credit_card_rounded, const Color(0xFF64748B)),
+                  if (c.dettesRecouvrees > 0)
+                    _modeCard('Dettes recouvrées', fcfa(c.dettesRecouvrees), Icons.assignment_turned_in_rounded, const Color(0xFF059669)),
+                  if (c.totalCredits > 0)
+                    _modeCard('Crédits accordés', fcfa(c.totalCredits), Icons.schedule_rounded, const Color(0xFFDC2626)),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Contrôle du tiroir-caisse et écart
+              const Text('Contrôle du tiroir-caisse :', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _fondCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Fond de caisse matin',
+                        suffixText: 'F CFA',
+                        prefixIcon: Icon(Icons.savings_rounded),
+                      ),
+                      onChanged: (_) => _recalculer(),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _compteesCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Espèces réelles comptées',
+                        suffixText: 'F CFA',
+                        prefixIcon: Icon(Icons.attach_money_rounded),
+                      ),
+                      onChanged: (_) => _recalculer(),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              // Bilan espèces théoriques vs comptées
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: ecart == 0
+                      ? const Color(0xFFDCFCE7)
+                      : (ecart > 0 ? const Color(0xFFEFF6FF) : const Color(0xFFFEE2E2)),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: ecart == 0
+                        ? const Color(0xFF86EFAC)
+                        : (ecart > 0 ? const Color(0xFF93C5FD) : const Color(0xFFFCA5A5)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      ecart == 0
+                          ? Icons.check_circle_rounded
+                          : (ecart > 0 ? Icons.info_rounded : Icons.warning_rounded),
+                      color: ecart == 0
+                          ? const Color(0xFF16A34A)
+                          : (ecart > 0 ? const Color(0xFF2563EB) : const Color(0xFFDC2626)),
+                      size: 28,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Espèces théoriques attendues :', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              Text(fcfa(c.especesTheoriques), style: const TextStyle(fontWeight: FontWeight.w800)),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                ecart == 0
+                                    ? '✓ Caisse parfaitement équilibrée'
+                                    : (ecart > 0 ? 'Excédent de caisse :' : 'Écart / Manque en caisse :'),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                  color: ecart == 0
+                                      ? const Color(0xFF166534)
+                                      : (ecart > 0 ? const Color(0xFF1D4ED8) : const Color(0xFF991B1B)),
+                                ),
+                              ),
+                              Text(
+                                '${ecart > 0 ? "+" : ""}${fcfa(ecart)}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 15,
+                                  color: ecart == 0
+                                      ? const Color(0xFF166534)
+                                      : (ecart > 0 ? const Color(0xFF1D4ED8) : const Color(0xFF991B1B)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Observations éventuelles
+              TextFormField(
+                controller: _obsCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Observations / Justification d’écart (facultatif)',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                ),
+                onChanged: (_) => _recalculer(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        IconButton(
+          tooltip: 'Tester ouverture du tiroir-caisse',
+          icon: const Icon(Icons.point_of_sale_rounded),
+          onPressed: () => TicketService.ouvrirTiroirCaisse(context),
+        ),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final repo = context.read<Repo>();
+            await repo.enregistrerCloture(c);
+            if (context.mounted) {
+              await TicketService.telechargerClotureZPdf(context, c);
+            }
+          },
+          icon: const Icon(Icons.download_rounded, size: 18),
+          label: const Text('PDF Z'),
+        ),
+        FilledButton.tonalIcon(
+          onPressed: () async {
+            final repo = context.read<Repo>();
+            await repo.enregistrerCloture(c);
+            if (context.mounted) {
+              await TicketService.imprimerClotureZ(context, c);
+            }
+          },
+          icon: const Icon(Icons.print_rounded, size: 18),
+          label: const Text('Imprimer Z (ESC/POS)'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            final repo = context.read<Repo>();
+            await repo.enregistrerCloture(c);
+            if (context.mounted) {
+              Navigator.pop(context);
+              message(context, '✓ Clôture de caisse du jour validée et enregistrée !');
+            }
+          },
+          child: const Text('Valider Clôture'),
+        ),
+      ],
+    );
+  }
+
+  Widget _modeCard(String titre, String montant, IconData icon, Color color) {
+    return Container(
+      width: 160,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 15, color: color),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  titre,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            montant,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: Color(0xFF0F172A)),
+          ),
+        ],
+      ),
     );
   }
 }

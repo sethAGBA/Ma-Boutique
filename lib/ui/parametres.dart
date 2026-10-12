@@ -11,6 +11,7 @@ import '../data/repo.dart';
 import '../services/license_service.dart';
 import 'helpers.dart';
 import 'license_page.dart';
+import 'ticket_service.dart';
 
 class ParametresPage extends StatefulWidget {
   const ParametresPage({super.key});
@@ -29,6 +30,8 @@ class _ParametresPageState extends State<ParametresPage> {
   late final TextEditingController _devise;
 
   String _logoPath = '';
+  int _largeurTicket = 80;
+  bool _ouvrirTiroir = false;
   bool _charge = false;
 
   @override
@@ -66,6 +69,8 @@ class _ParametresPageState extends State<ParametresPage> {
         _messageTicket.text = p.messageTicket;
         _devise.text = p.devise;
         _logoPath = p.logoPath;
+        _largeurTicket = p.largeurTicket;
+        _ouvrirTiroir = p.ouvrirTiroir;
         _charge = true;
       });
     }
@@ -111,9 +116,11 @@ class _ParametresPageState extends State<ParametresPage> {
       messageTicket: _messageTicket.text.trim(),
       devise: _devise.text.trim().isEmpty ? 'F CFA' : _devise.text.trim(),
       logoPath: _logoPath,
+      largeurTicket: _largeurTicket,
+      ouvrirTiroir: _ouvrirTiroir,
     );
     await repo.sauverParametres(p);
-    if (mounted) message(context, '✓ Coordonnées de la boutique enregistrées avec succès');
+    if (mounted) message(context, '✓ Coordonnées et configuration d’impression enregistrées');
   }
 
   Future<void> _changerPin(Utilisateur user) async {
@@ -429,7 +436,102 @@ class _ParametresPageState extends State<ParametresPage> {
 
                 const SizedBox(height: 20),
 
-                // 2. Gestion des utilisateurs & Codes PIN
+                // 2. Configuration Imprimante Ticket & Tiroir-Caisse
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE0E7FF),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.print_rounded, color: Color(0xFF4338CA)),
+                            ),
+                            const SizedBox(width: 12),
+                            const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Imprimante Ticket & Tiroir-Caisse (ESC/POS)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                                Text('Compatibilité 58 mm et 80 mm (Xprinter, Epson, Bluetooth/USB)', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const Text('Format du rouleau :', style: TextStyle(fontWeight: FontWeight.w600)),
+                            const SizedBox(width: 16),
+                            SegmentedButton<int>(
+                              segments: const [
+                                ButtonSegment<int>(value: 58, label: Text('58 mm (Compact)'), icon: Icon(Icons.receipt_long_rounded)),
+                                ButtonSegment<int>(value: 80, label: Text('80 mm (Standard)'), icon: Icon(Icons.receipt_rounded)),
+                              ],
+                              selected: {_largeurTicket},
+                              onSelectionChanged: (val) {
+                                setState(() => _largeurTicket = val.first);
+                                _enregistrerBoutique();
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Ouvrir automatiquement le tiroir-caisse lors d’un encaissement en espèces'),
+                          subtitle: const Text('Envoie l’impulsion électrique ESC/POS au tiroir connecté à l’imprimante'),
+                          value: _ouvrirTiroir,
+                          onChanged: (val) {
+                            setState(() => _ouvrirTiroir = val);
+                            _enregistrerBoutique();
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 10,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => TicketService.ouvrirTiroirCaisse(context),
+                              icon: const Icon(Icons.point_of_sale_rounded, size: 18),
+                              label: const Text('Tester l’ouverture tiroir'),
+                            ),
+                            FilledButton.tonalIcon(
+                              onPressed: () async {
+                                final dummyLignes = [
+                                  LigneVente(
+                                    produit: const Produit(nom: 'Article de Test', prixVente: 1000),
+                                    qte: 1,
+                                  ),
+                                ];
+                                await TicketService.imprimerTicket(
+                                  context: context,
+                                  venteId: 9999,
+                                  lignes: dummyLignes,
+                                  total: 1000,
+                                  montantPaye: 1000,
+                                );
+                              },
+                              icon: const Icon(Icons.print_rounded, size: 18),
+                              label: const Text('Imprimer un ticket test'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // 3. Gestion des utilisateurs & Codes PIN
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(20),

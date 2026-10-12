@@ -29,24 +29,26 @@ class Repo extends ChangeNotifier {
     final t = q.trim();
     final cat = categorie?.trim() ?? '';
     
-    final whereClauses = ['actif = 1'];
+    final whereClauses = ['p.actif = 1'];
     final whereArgs = <Object?>[];
 
     if (t.isNotEmpty) {
-      whereClauses.add('(nom LIKE ? OR categorie LIKE ? OR code_barres = ?)');
+      whereClauses.add('(p.nom LIKE ? OR p.categorie LIKE ? OR p.code_barres = ?)');
       whereArgs.addAll(['%$t%', '%$t%', t]);
     }
     if (cat.isNotEmpty) {
-      whereClauses.add('categorie = ?');
+      whereClauses.add('p.categorie = ?');
       whereArgs.add(cat);
     }
 
-    final rows = await d.query(
-      'produits',
-      where: whereClauses.join(' AND '),
-      whereArgs: whereArgs.isEmpty ? null : whereArgs,
-      orderBy: 'nom COLLATE NOCASE',
-    );
+    final whereSql = whereClauses.join(' AND ');
+    final rows = await d.rawQuery('''
+      SELECT p.*, parent.nom AS produit_parent_nom
+      FROM produits p
+      LEFT JOIN produits parent ON parent.id = p.produit_parent_id
+      WHERE $whereSql
+      ORDER BY p.nom COLLATE NOCASE
+    ''', whereArgs.isEmpty ? null : whereArgs);
     return rows.map(Produit.fromMap).toList();
   }
 
@@ -63,7 +65,8 @@ class Repo extends ChangeNotifier {
     final d = await _d;
     final depuis = DateTime.now().subtract(const Duration(days: 30)).toIso8601String();
     final rows = await d.rawQuery('''
-      SELECT p.* FROM produits p
+      SELECT p.*, parent.nom AS produit_parent_nom FROM produits p
+      LEFT JOIN produits parent ON parent.id = p.produit_parent_id
       LEFT JOIN (
         SELECT l.produit_id AS pid, SUM(l.quantite) AS q
         FROM lignes_vente l JOIN ventes v ON v.id = l.vente_id
@@ -78,9 +81,72 @@ class Repo extends ChangeNotifier {
   Future<Produit?> parCodeBarres(String code) async {
     if (code.trim().isEmpty) return null;
     final d = await _d;
-    final rows = await d.query('produits',
-        where: 'actif = 1 AND code_barres = ?', whereArgs: [code.trim()], limit: 1);
+    final rows = await d.rawQuery('''
+      SELECT p.*, parent.nom AS produit_parent_nom
+      FROM produits p
+      LEFT JOIN produits parent ON parent.id = p.produit_parent_id
+      WHERE p.actif = 1 AND p.code_barres = ?
+      LIMIT 1
+    ''', [code.trim()]);
     return rows.isEmpty ? null : Produit.fromMap(rows.first);
+  }
+
+  /// Déconditionnement : ouvre un ou plusieurs cartons/sacs d'un produit parent pour alimenter le stock détail.
+  Future<void> deconditionnerProduit({
+    required int produitDetailId,
+    int nbCartons = 1,
+  }) async {
+    if (nbCartons <= 0) return;
+    final d = await _d;
+    final now = _maintenant;
+
+    await d.transaction((txn) async {
+      // 1. Récupérer le produit détail
+      final detailRows = await txn.query('produits', where: 'id = ?', whereArgs: [produitDetailId]);
+      if (detailRows.isEmpty) throw Exception('Produit détail introuvable');
+      final detail = Produit.fromMap(detailRows.first);
+
+      if (detail.produitParentId == null || detail.facteurConversion <= 0) {
+        throw Exception('Ce produit n\'a aucun carton parent associé');
+      }
+
+      // 2. Récupérer le produit parent (carton/sac)
+      final parentRows = await txn.query('produits', where: 'id = ?', whereArgs: [detail.produitParentId]);
+      if (parentRows.isEmpty) throw Exception('Produit carton/parent introuvable');
+      final parent = Produit.fromMap(parentRows.first);
+
+      if (parent.stock < nbCartons) {
+        throw Exception('Stock de carton insuffisant (${parent.stock} carton(s) en réserve, requis: $nbCartons)');
+      }
+
+      final unitesAjoutees = nbCartons * detail.facteurConversion;
+
+      // 3. Décrémenter le stock parent
+      await txn.rawUpdate(
+        'UPDATE produits SET stock = stock - ? WHERE id = ?',
+        [nbCartons, parent.id],
+      );
+      await txn.insert('mouvements_stock', {
+        'produit_id': parent.id,
+        'type': 'deconditionnement',
+        'quantite': -nbCartons,
+        'date': now,
+      });
+
+      // 4. Incrémenter le stock détail
+      await txn.rawUpdate(
+        'UPDATE produits SET stock = stock + ? WHERE id = ?',
+        [unitesAjoutees, detail.id],
+      );
+      await txn.insert('mouvements_stock', {
+        'produit_id': detail.id,
+        'type': 'deconditionnement',
+        'quantite': unitesAjoutees,
+        'date': now,
+      });
+    });
+
+    notifyListeners();
   }
 
   Future<List<Produit>> produitsEnAlerte() async {
@@ -160,6 +226,7 @@ class Repo extends ChangeNotifier {
     required int montantPaye,
     int? clientId,
     int remise = 0,
+    String modePaiement = 'especes',
   }) async {
     if (lignes.isEmpty) throw Exception('Le panier est vide.');
     final sousTotal = lignes.fold<int>(0, (s, l) => s + l.total);
@@ -177,7 +244,7 @@ class Repo extends ChangeNotifier {
         'total': total,
         'montant_paye': paye,
         'client_id': reste > 0 ? clientId : null,
-        'mode_paiement': reste > 0 ? 'credit' : 'especes',
+        'mode_paiement': reste > 0 ? 'credit' : modePaiement,
       });
       for (final l in lignes) {
         await txn.insert('lignes_vente', {
@@ -454,6 +521,136 @@ class Repo extends ChangeNotifier {
       nouveauxCredits: credits,
       dettesRecouvrees: dettesRecouvrees,
     );
+  }
+
+  /// Fond de caisse initial du jour (monnaie de départ)
+  Future<int> getFondCaisseDuJour([DateTime? dateRef]) async {
+    final d = await _d;
+    final n = dateRef ?? DateTime.now();
+    final cle = 'fond_caisse_${DateFormat('yyyy-MM-dd').format(n)}';
+    final rows = await d.query('parametres', where: 'cle = ?', whereArgs: [cle]);
+    if (rows.isEmpty) return 0;
+    return int.tryParse(rows.first['valeur'] as String) ?? 0;
+  }
+
+  /// Définit le fond de caisse du jour
+  Future<void> setFondCaisseDuJour(int montant, [DateTime? dateRef]) async {
+    final d = await _d;
+    final n = dateRef ?? DateTime.now();
+    final cle = 'fond_caisse_${DateFormat('yyyy-MM-dd').format(n)}';
+    await d.insert('parametres', {'cle': cle, 'valeur': montant.toString()},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    notifyListeners();
+  }
+
+  /// Calcule en temps réel le bilan de clôture de caisse (Ticket Z) avec ventilation des paiements
+  Future<ClotureCaisse> calculerBilanCloture({
+    int? fondCaisse,
+    DateTime? dateRef,
+    String? caissierNom,
+    int? especesComptees,
+    String observations = '',
+  }) async {
+    final d = await _d;
+    final n = dateRef ?? DateTime.now();
+    final debut = DateTime(n.year, n.month, n.day).toIso8601String();
+    final fin = DateTime(n.year, n.month, n.day, 23, 59, 59).toIso8601String();
+    final dateStr = DateFormat('dd/MM/yyyy').format(n);
+    final dateHeureStr = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+
+    final fond = fondCaisse ?? await getFondCaisseDuJour(n);
+
+    // Ventes ventilées par mode de paiement
+    final vRows = await d.rawQuery('''
+      SELECT 
+        COUNT(*) AS nb,
+        COALESCE(SUM(total), 0) AS total,
+        COALESCE(SUM(CASE WHEN mode_paiement = 'especes' THEN (CASE WHEN montant_paye >= total THEN total ELSE montant_paye END) ELSE 0 END), 0) AS esp,
+        COALESCE(SUM(CASE WHEN mode_paiement = 'tmoney' THEN montant_paye ELSE 0 END), 0) AS tmoney,
+        COALESCE(SUM(CASE WHEN mode_paiement = 'flooz' THEN montant_paye ELSE 0 END), 0) AS flooz,
+        COALESCE(SUM(CASE WHEN mode_paiement = 'wave' THEN montant_paye ELSE 0 END), 0) AS wave,
+        COALESCE(SUM(CASE WHEN mode_paiement = 'orange_money' THEN montant_paye ELSE 0 END), 0) AS om,
+        COALESCE(SUM(CASE WHEN mode_paiement = 'mtn_momo' THEN montant_paye ELSE 0 END), 0) AS mtn,
+        COALESCE(SUM(CASE WHEN mode_paiement IN ('carte', 'virement', 'cheque') THEN montant_paye ELSE 0 END), 0) AS autres,
+        COALESCE(SUM(CASE WHEN total > montant_paye THEN total - montant_paye ELSE 0 END), 0) AS credits
+      FROM ventes
+      WHERE date >= ? AND date <= ?
+    ''', [debut, fin]);
+
+    // Bénéfice estimé
+    final bRows = await d.rawQuery('''
+      SELECT COALESCE(SUM((l.prix_unitaire - l.prix_achat) * l.quantite), 0) AS b
+      FROM lignes_vente l
+      JOIN ventes v ON v.id = l.vente_id
+      WHERE v.date >= ? AND v.date <= ?
+    ''', [debut, fin]);
+
+    // Dettes recouvrées en espèces
+    final pRows = await d.rawQuery('''
+      SELECT COALESCE(SUM(montant), 0) AS recouv
+      FROM paiements_credit
+      WHERE date >= ? AND date <= ?
+    ''', [debut, fin]);
+
+    final nb = (vRows.first['nb'] as int?) ?? 0;
+    final total = (vRows.first['total'] as int?) ?? 0;
+    final esp = (vRows.first['esp'] as int?) ?? 0;
+    final tmoney = (vRows.first['tmoney'] as int?) ?? 0;
+    final flooz = (vRows.first['flooz'] as int?) ?? 0;
+    final wave = (vRows.first['wave'] as int?) ?? 0;
+    final om = (vRows.first['om'] as int?) ?? 0;
+    final mtn = (vRows.first['mtn'] as int?) ?? 0;
+    final autres = (vRows.first['autres'] as int?) ?? 0;
+    final credits = (vRows.first['credits'] as int?) ?? 0;
+    final benefice = (bRows.first['b'] as int?) ?? 0;
+    final dettesRecouvrees = (pRows.first['recouv'] as int?) ?? 0;
+
+    final espTheoriques = fond + esp + dettesRecouvrees;
+    final comptees = especesComptees ?? espTheoriques;
+    final ecart = comptees - espTheoriques;
+
+    return ClotureCaisse(
+      date: dateStr,
+      dateHeure: dateHeureStr,
+      caissierNom: caissierNom ?? 'Caisse Principale',
+      fondCaisse: fond,
+      totalVentes: total,
+      nbVentes: nb,
+      beneficeEstime: benefice,
+      totalEspeces: esp,
+      totalTmoney: tmoney,
+      totalFlooz: flooz,
+      totalWave: wave,
+      totalOrangeMoney: om,
+      totalMtnMomo: mtn,
+      totalAutres: autres,
+      totalCredits: credits,
+      dettesRecouvrees: dettesRecouvrees,
+      depensesEspeces: 0,
+      especesTheoriques: espTheoriques,
+      especesComptees: comptees,
+      ecart: ecart,
+      observations: observations,
+    );
+  }
+
+  /// Enregistre définitivement une clôture Z dans l'historique
+  Future<int> enregistrerCloture(ClotureCaisse c) async {
+    final d = await _d;
+    final id = await d.insert('clotures_caisse', c.toMap());
+    notifyListeners();
+    return id;
+  }
+
+  /// Historique des clôtures Z de caisse passées
+  Future<List<ClotureCaisse>> historiqueClotures({int limit = 50}) async {
+    final d = await _d;
+    final rows = await d.query(
+      'clotures_caisse',
+      orderBy: 'id DESC',
+      limit: limit,
+    );
+    return rows.map(ClotureCaisse.fromMap).toList();
   }
 
   /// Situation d'Inventaire (SI) & Valorisation globale du stock
@@ -852,6 +1049,8 @@ class Repo extends ChangeNotifier {
       messageTicket: map['message_ticket'] ?? 'Merci de votre visite et à bientôt !',
       devise: map['devise'] ?? 'F CFA',
       logoPath: map['logo_path'] ?? '',
+      largeurTicket: int.tryParse(map['largeur_ticket'] ?? '80') ?? 80,
+      ouvrirTiroir: (map['ouvrir_tiroir'] ?? '0') == '1',
     );
   }
 
@@ -871,6 +1070,10 @@ class Repo extends ChangeNotifier {
     batch.insert('parametres', {'cle': 'devise', 'valeur': p.devise},
         conflictAlgorithm: ConflictAlgorithm.replace);
     batch.insert('parametres', {'cle': 'logo_path', 'valeur': p.logoPath},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    batch.insert('parametres', {'cle': 'largeur_ticket', 'valeur': p.largeurTicket.toString()},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    batch.insert('parametres', {'cle': 'ouvrir_tiroir', 'valeur': p.ouvrirTiroir ? '1' : '0'},
         conflictAlgorithm: ConflictAlgorithm.replace);
     await batch.commit(noResult: true);
     notifyListeners();
