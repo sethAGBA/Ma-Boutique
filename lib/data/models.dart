@@ -356,6 +356,9 @@ class ParametresBoutique {
   final String logoPath;
   final int largeurTicket; // 58 ou 80
   final bool ouvrirTiroir; // ouverture automatique tiroir-caisse
+  final String nif; // NIF OTR (Togo)
+  final String rccm; // RCCM Togo
+  final String email;
 
   const ParametresBoutique({
     this.nomBoutique = 'Ma Boutique',
@@ -367,6 +370,9 @@ class ParametresBoutique {
     this.logoPath = '',
     this.largeurTicket = 80,
     this.ouvrirTiroir = false,
+    this.nif = '',
+    this.rccm = '',
+    this.email = '',
   });
 
   ParametresBoutique copyWith({
@@ -379,6 +385,9 @@ class ParametresBoutique {
     String? logoPath,
     int? largeurTicket,
     bool? ouvrirTiroir,
+    String? nif,
+    String? rccm,
+    String? email,
   }) {
     return ParametresBoutique(
       nomBoutique: nomBoutique ?? this.nomBoutique,
@@ -390,6 +399,9 @@ class ParametresBoutique {
       logoPath: logoPath ?? this.logoPath,
       largeurTicket: largeurTicket ?? this.largeurTicket,
       ouvrirTiroir: ouvrirTiroir ?? this.ouvrirTiroir,
+      nif: nif ?? this.nif,
+      rccm: rccm ?? this.rccm,
+      email: email ?? this.email,
     );
   }
 }

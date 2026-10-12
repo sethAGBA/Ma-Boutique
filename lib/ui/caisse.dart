@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../data/models.dart';
 import '../data/repo.dart';
+import 'facture_service.dart';
 import 'helpers.dart';
 import 'ticket_service.dart';
 
@@ -301,7 +302,7 @@ class _CaissePageState extends State<CaissePage> {
 
   Future<void> _encaisser() async {
     final repo = context.read<Repo>();
-    final r = await showDialog<(int, int?, String)>(
+    final r = await showDialog<(int, int?, String, String?, String?)>(
       context: context,
       builder: (_) => _PaiementDialog(total: _total),
     );
@@ -313,6 +314,8 @@ class _CaissePageState extends State<CaissePage> {
     final montantPaye = r.$1;
     final clientId = r.$2;
     final modePaiement = r.$3;
+    final clientNom = r.$4;
+    final clientTelephone = r.$5;
 
     try {
       final venteId = await repo.enregistrerVente(
@@ -346,6 +349,8 @@ class _CaissePageState extends State<CaissePage> {
           total: totalVente,
           montantPaye: montantPaye,
           clientId: clientId,
+          clientNom: clientNom,
+          clientTelephone: clientTelephone,
           remise: remiseVente,
           modePaiement: modePaiement,
         ),
@@ -1329,7 +1334,17 @@ class _PaiementDialogState extends State<_PaiementDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
         FilledButton(
-          onPressed: peutValider ? () => Navigator.pop(context, (recu, _clientId, _mode)) : null,
+          onPressed: peutValider
+              ? () {
+                  final clientTrouve = _clientId != null
+                      ? _clients.where((c) => c.id == _clientId).firstOrNull
+                      : null;
+                  Navigator.pop(
+                    context,
+                    (recu, _clientId, _mode, clientTrouve?.nom, clientTrouve?.telephone),
+                  );
+                }
+              : null,
           child: const Text('Valider la vente'),
         ),
       ],
@@ -1344,6 +1359,8 @@ class _TicketDialog extends StatelessWidget {
   final int total;
   final int montantPaye;
   final int? clientId;
+  final String? clientNom;
+  final String? clientTelephone;
   final int remise;
   final String modePaiement;
 
@@ -1353,6 +1370,8 @@ class _TicketDialog extends StatelessWidget {
     required this.total,
     required this.montantPaye,
     this.clientId,
+    this.clientNom,
+    this.clientTelephone,
     this.remise = 0,
     this.modePaiement = 'especes',
   });
@@ -1507,6 +1526,21 @@ class _TicketDialog extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
+            FilledButton.tonalIcon(
+              onPressed: () => FactureService.afficherDialogueFacture(
+                context: context,
+                venteId: venteId,
+                lignes: lignes,
+                total: total,
+                montantPaye: montantPaye,
+                clientNom: clientNom,
+                clientTelephone: clientTelephone,
+                remise: remise,
+                modePaiement: modePaiement,
+              ),
+              icon: const Icon(Icons.receipt_long_rounded, size: 18),
+              label: const Text('Facture A4'),
+            ),
             OutlinedButton.icon(
               onPressed: () => TicketService.imprimerTicket(
                 context: context,
@@ -1518,7 +1552,7 @@ class _TicketDialog extends StatelessWidget {
                 modePaiement: modePaiement,
               ),
               icon: const Icon(Icons.print_rounded, size: 18),
-              label: const Text('Imprimer (ESC/POS)'),
+              label: const Text('Ticket (ESC/POS)'),
             ),
             OutlinedButton.icon(
               onPressed: () => TicketService.telechargerPdf(

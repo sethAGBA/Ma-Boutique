@@ -28,6 +28,9 @@ class _ParametresPageState extends State<ParametresPage> {
   late final TextEditingController _adresse;
   late final TextEditingController _messageTicket;
   late final TextEditingController _devise;
+  late final TextEditingController _nif;
+  late final TextEditingController _rccm;
+  late final TextEditingController _email;
 
   String _logoPath = '';
   int _largeurTicket = 80;
@@ -43,6 +46,9 @@ class _ParametresPageState extends State<ParametresPage> {
     _adresse = TextEditingController();
     _messageTicket = TextEditingController();
     _devise = TextEditingController();
+    _nif = TextEditingController();
+    _rccm = TextEditingController();
+    _email = TextEditingController();
     _charger();
   }
 
@@ -54,6 +60,9 @@ class _ParametresPageState extends State<ParametresPage> {
     _adresse.dispose();
     _messageTicket.dispose();
     _devise.dispose();
+    _nif.dispose();
+    _rccm.dispose();
+    _email.dispose();
     super.dispose();
   }
 
@@ -68,6 +77,9 @@ class _ParametresPageState extends State<ParametresPage> {
         _adresse.text = p.adresse;
         _messageTicket.text = p.messageTicket;
         _devise.text = p.devise;
+        _nif.text = p.nif;
+        _rccm.text = p.rccm;
+        _email.text = p.email;
         _logoPath = p.logoPath;
         _largeurTicket = p.largeurTicket;
         _ouvrirTiroir = p.ouvrirTiroir;
@@ -118,6 +130,9 @@ class _ParametresPageState extends State<ParametresPage> {
       logoPath: _logoPath,
       largeurTicket: _largeurTicket,
       ouvrirTiroir: _ouvrirTiroir,
+      nif: _nif.text.trim(),
+      rccm: _rccm.text.trim(),
+      email: _email.text.trim(),
     );
     await repo.sauverParametres(p);
     if (mounted) message(context, '✓ Coordonnées et configuration d’impression enregistrées');
@@ -406,7 +421,7 @@ class _ParametresPageState extends State<ParametresPage> {
                                 flex: 3,
                                 child: TextFormField(
                                   controller: _messageTicket,
-                                  decoration: const InputDecoration(labelText: 'Message de remerciement au pied du ticket'),
+                                  decoration: const InputDecoration(labelText: 'Message de remerciement au pied du ticket / facture'),
                                 ),
                               ),
                               const SizedBox(width: 16),
@@ -415,6 +430,44 @@ class _ParametresPageState extends State<ParametresPage> {
                                 child: TextFormField(
                                   controller: _devise,
                                   decoration: const InputDecoration(labelText: 'Devise monétaire'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _nif,
+                                  decoration: const InputDecoration(
+                                    labelText: 'NIF (Identifiant Fiscal Togo / OTR)',
+                                    hintText: 'Ex: 100012345678',
+                                    prefixIcon: Icon(Icons.badge_outlined, size: 20),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _rccm,
+                                  decoration: const InputDecoration(
+                                    labelText: 'RCCM (Registre du Commerce)',
+                                    hintText: 'Ex: TG-LOM-2024-B-0123',
+                                    prefixIcon: Icon(Icons.business_outlined, size: 20),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _email,
+                                  keyboardType: TextInputType.emailAddress,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Email officiel (optionnel)',
+                                    hintText: 'contact@boutique.tg',
+                                    prefixIcon: Icon(Icons.email_outlined, size: 20),
+                                  ),
                                 ),
                               ),
                             ],

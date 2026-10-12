@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import '../data/models.dart';
 import '../data/repo.dart';
 import 'declarer_perte_dialog.dart';
+import 'facture_service.dart';
 import 'helpers.dart';
 import 'ticket_service.dart';
 
@@ -536,6 +537,20 @@ class _RapportsPageState extends State<RapportsPage> {
                               ),
                             ),
                             actions: [
+                              FilledButton.tonalIcon(
+                                onPressed: () => FactureService.afficherDialogueFacture(
+                                  context: dialogCtx,
+                                  venteId: v.id,
+                                  lignes: v.lignes,
+                                  total: v.total,
+                                  montantPaye: v.montantPaye,
+                                  clientNom: v.clientNom,
+                                  modePaiement: v.modePaiement,
+                                  dateVente: v.date,
+                                ),
+                                icon: const Icon(Icons.receipt_long_rounded, size: 18),
+                                label: const Text('Facture A4'),
+                              ),
                               OutlinedButton.icon(
                                 onPressed: () => TicketService.imprimerTicket(
                                   context: dialogCtx,
@@ -546,7 +561,7 @@ class _RapportsPageState extends State<RapportsPage> {
                                   clientNom: v.clientNom,
                                 ),
                                 icon: const Icon(Icons.print_rounded, size: 18),
-                                label: const Text('Imprimer'),
+                                label: const Text('Ticket'),
                               ),
                               OutlinedButton.icon(
                                 onPressed: () => TicketService.telechargerPdf(

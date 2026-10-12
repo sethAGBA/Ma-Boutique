@@ -194,3 +194,80 @@ class _NombreDialogState extends State<_NombreDialog> {
     );
   }
 }
+
+/// Convertit un montant entier en toutes lettres en français (ex: 125 000 -> "Cent vingt-cinq mille")
+String nombreEnLettres(int n) {
+  if (n == 0) return 'zéro';
+  if (n < 0) return 'moins ${nombreEnLettres(-n)}';
+
+  const unites = [
+    '', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf',
+    'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'
+  ];
+  const dizaines = [
+    '', 'dix', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante-dix', 'quatre-vingts', 'quatre-vingt-dix'
+  ];
+
+  String sousCent(int x) {
+    if (x < 20) return unites[x];
+    final d = x ~/ 10;
+    final u = x % 10;
+    if (d == 7) {
+      if (u == 1) return 'soixante et onze';
+      return 'soixante-${unites[10 + u]}';
+    }
+    if (d == 8) {
+      if (u == 0) return 'quatre-vingts';
+      return 'quatre-vingt-${unites[u]}';
+    }
+    if (d == 9) {
+      return 'quatre-vingt-${unites[10 + u]}';
+    }
+    if (u == 1 && d != 8) return '${dizaines[d]} et un';
+    if (u == 0) return dizaines[d];
+    return '${dizaines[d]}-${unites[u]}';
+  }
+
+  String sousMille(int x) {
+    if (x == 0) return '';
+    final c = x ~/ 100;
+    final r = x % 100;
+    String centStr = '';
+    if (c == 1) {
+      centStr = 'cent';
+    } else if (c > 1) {
+      centStr = r == 0 ? '${unites[c]} cents' : '${unites[c]} cent';
+    }
+    final resteStr = sousCent(r);
+    if (centStr.isEmpty) return resteStr;
+    if (resteStr.isEmpty) return centStr;
+    return '$centStr $resteStr';
+  }
+
+  final milliards = n ~/ 1000000000;
+  final resteMilliards = n % 1000000000;
+  final millions = resteMilliards ~/ 1000000;
+  final resteMillions = resteMilliards % 1000000;
+  final milliers = resteMillions ~/ 1000;
+  final resteMilliers = resteMillions % 1000;
+
+  final parties = <String>[];
+  if (milliards > 0) {
+    parties.add(milliards == 1 ? 'un milliard' : '${sousMille(milliards)} milliards');
+  }
+  if (millions > 0) {
+    parties.add(millions == 1 ? 'un million' : '${sousMille(millions)} millions');
+  }
+  if (milliers > 0) {
+    parties.add(milliers == 1 ? 'mille' : '${sousMille(milliers)} mille');
+  }
+  if (resteMilliers > 0 || parties.isEmpty) {
+    final s = sousMille(resteMilliers);
+    if (s.isNotEmpty) parties.add(s);
+  }
+
+  final res = parties.join(' ').trim();
+  if (res.isEmpty) return 'zéro';
+  return res[0].toUpperCase() + res.substring(1);
+}
+

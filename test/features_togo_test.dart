@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stockar/data/models.dart';
+import 'package:stockar/ui/facture_service.dart';
+import 'package:stockar/ui/helpers.dart';
 
 void main() {
   group('Marché Togolais & Fonctionnalités 1, 3, 5', () {
@@ -150,6 +152,78 @@ void main() {
       expect(stats.repartitionParMotif['avarie'], 3500);
       expect(stats.repartitionParMotif['perime'], 4000);
       expect(stats.repartitionParMotif['consommation'], 2000);
+    });
+
+    test('Module Facture : Conversion des montants en toutes lettres en français', () {
+      expect(nombreEnLettres(0), 'zéro');
+      expect(nombreEnLettres(1), 'Un');
+      expect(nombreEnLettres(15), 'Quinze');
+      expect(nombreEnLettres(80), 'Quatre-vingts');
+      expect(nombreEnLettres(100), 'Cent');
+      expect(nombreEnLettres(1500), 'Mille cinq cents');
+      expect(nombreEnLettres(25000), 'Vingt-cinq mille');
+      expect(nombreEnLettres(125000), 'Cent vingt-cinq mille');
+      expect(nombreEnLettres(1250500), 'Un million deux cent cinquante mille cinq cents');
+    });
+
+    test('Module Facture : Coordonnées fiscales NIF, RCCM et boutique Togo', () {
+      final p = ParametresBoutique(
+        nomBoutique: 'Établissements Kodjo & Fils',
+        sousTitre: 'Import - Demi-Gros & Détail',
+        adresse: 'Grand Marché d’Adawlato, Lomé - Togo',
+        telephone: '+228 90 12 34 56',
+        nif: '100012345678',
+        rccm: 'TG-LOM-2024-B-0987',
+        email: 'kodjo@boutique.tg',
+      );
+
+      expect(p.nomBoutique, 'Établissements Kodjo & Fils');
+      expect(p.nif, '100012345678');
+      expect(p.rccm, 'TG-LOM-2024-B-0987');
+      expect(p.email, 'kodjo@boutique.tg');
+    });
+
+    test('Module Facture : Génération binaire d’une Facture A4 PDF complète', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final produit1 = const Produit(
+        id: 1,
+        nom: 'Riz Parfumé Mémé Cassé 25kg',
+        prixVente: 18500,
+        unite: 'sac',
+      );
+      final produit2 = const Produit(
+        id: 2,
+        nom: 'Carton Huile Végétale Mayor 12x1L',
+        prixVente: 16000,
+        unite: 'carton',
+      );
+
+      final lignes = [
+        LigneVente(produit: produit1, qte: 2), // 37 000
+        LigneVente(produit: produit2, qte: 1), // 16 000
+      ];
+
+      final pdfBytes = await FactureService.genererPdfFactureA4(
+        venteId: 104,
+        lignes: lignes,
+        total: 53000,
+        montantPaye: 53000,
+        clientNom: 'Société Ets Togoville',
+        clientTelephone: '+228 91 22 33 44',
+        modePaiement: 'tmoney',
+        dateVente: '2026-10-12T15:30:00.000',
+        caissierNom: 'Afi',
+        parametresBoutique: const ParametresBoutique(
+          nomBoutique: 'Établissements Kodjo & Fils',
+          telephone: '+228 90 00 00 00',
+          nif: '100012345678',
+        ),
+      );
+
+      expect(pdfBytes, isNotEmpty);
+      // Vérification signature magique PDF (%PDF-)
+      final entete = String.fromCharCodes(pdfBytes.sublist(0, 5));
+      expect(entete, '%PDF-');
     });
   });
 }

@@ -336,6 +336,55 @@ class Repo extends ChangeNotifier {
     return liste;
   }
 
+  /// Récupère une vente par son identifiant avec toutes ses lignes de produits.
+  Future<Vente?> venteParId(int id) async {
+    final d = await _d;
+    final rows = await d.rawQuery('''
+      SELECT v.*, c.nom AS client_nom
+      FROM ventes v
+      LEFT JOIN clients c ON c.id = v.client_id
+      WHERE v.id = ?
+    ''', [id]);
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    final lignesRows = await d.rawQuery('''
+      SELECT l.*, p.nom AS p_nom, p.code_barres AS p_code, p.categorie AS p_cat, p.unite AS p_unite, p.stock AS p_stock, p.seuil_alerte AS p_seuil
+      FROM lignes_vente l
+      JOIN produits p ON p.id = l.produit_id
+      WHERE l.vente_id = ?
+    ''', [id]);
+    final lignes = lignesRows.map((lr) {
+      final prod = Produit(
+        id: lr['produit_id'] as int,
+        nom: lr['p_nom'] as String,
+        codeBarres: (lr['p_code'] as String?) ?? '',
+        categorie: (lr['p_cat'] as String?) ?? '',
+        unite: (lr['p_unite'] as String?) ?? 'pièce',
+        prixAchat: lr['prix_achat'] as int,
+        prixVente: lr['prix_unitaire'] as int,
+        stock: lr['p_stock'] as int,
+        seuilAlerte: lr['p_seuil'] as int,
+      );
+      final estGros = ((lr['est_gros'] as int?) ?? 0) == 1;
+      return LigneVente(
+        produit: prod,
+        qte: lr['quantite'] as int,
+        estGros: estGros,
+        prixPersonnalise: lr['prix_unitaire'] as int,
+      );
+    }).toList();
+    return Vente(
+      id: id,
+      date: r['date'] as String,
+      total: r['total'] as int,
+      montantPaye: r['montant_paye'] as int,
+      clientId: r['client_id'] as int?,
+      clientNom: r['client_nom'] as String?,
+      modePaiement: (r['mode_paiement'] as String?) ?? 'especes',
+      lignes: lignes,
+    );
+  }
+
   /// Annule une vente : remet le stock en place et annule la dette client si crédit.
   Future<void> annulerVente(int venteId) async {
     final d = await _d;
@@ -1051,6 +1100,9 @@ class Repo extends ChangeNotifier {
       logoPath: map['logo_path'] ?? '',
       largeurTicket: int.tryParse(map['largeur_ticket'] ?? '80') ?? 80,
       ouvrirTiroir: (map['ouvrir_tiroir'] ?? '0') == '1',
+      nif: map['nif'] ?? '',
+      rccm: map['rccm'] ?? '',
+      email: map['email'] ?? '',
     );
   }
 
@@ -1074,6 +1126,12 @@ class Repo extends ChangeNotifier {
     batch.insert('parametres', {'cle': 'largeur_ticket', 'valeur': p.largeurTicket.toString()},
         conflictAlgorithm: ConflictAlgorithm.replace);
     batch.insert('parametres', {'cle': 'ouvrir_tiroir', 'valeur': p.ouvrirTiroir ? '1' : '0'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    batch.insert('parametres', {'cle': 'nif', 'valeur': p.nif},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    batch.insert('parametres', {'cle': 'rccm', 'valeur': p.rccm},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    batch.insert('parametres', {'cle': 'email', 'valeur': p.email},
         conflictAlgorithm: ConflictAlgorithm.replace);
     await batch.commit(noResult: true);
     notifyListeners();
