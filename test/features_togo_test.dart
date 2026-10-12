@@ -85,5 +85,72 @@ void main() {
       expect(params58.largeurTicket, 58);
       expect(params58.ouvrirTiroir, isFalse);
     });
+
+    test('Fonctionnalité 4 : Modèle PerteStock, motifs et conversion de données', () {
+      final perte = PerteStock(
+        id: 1,
+        produitId: 42,
+        produitNom: 'Lait Bonnet Rouge 410g',
+        produitUnite: 'boîte',
+        quantite: 3,
+        valeurAchat: 1800,
+        valeurVente: 2250,
+        motif: 'avarie',
+        commentaire: 'Boîtes cabossées à la livraison',
+        date: '2026-10-12T14:00:00.000',
+        auteur: 'Directeur',
+      );
+
+      expect(perte.motifLibelle, 'Casse / Boîte abîmée');
+      expect(perte.quantite, 3);
+      expect(perte.valeurAchat, 1800);
+      expect(perte.valeurVente, 2250);
+
+      final map = perte.toMap();
+      expect(map['produit_id'], 42);
+      expect(map['motif'], 'avarie');
+      expect(map['valeur_achat'], 1800);
+
+      final reconstructed = PerteStock.fromMap({
+        ...map,
+        'produit_nom': 'Lait Bonnet Rouge 410g',
+        'produit_unite': 'boîte',
+      });
+      expect(reconstructed.id, 1);
+      expect(reconstructed.produitNom, 'Lait Bonnet Rouge 410g');
+      expect(reconstructed.motif, 'avarie');
+      expect(reconstructed.motifLibelle, 'Casse / Boîte abîmée');
+    });
+
+    test('Fonctionnalité 4 : Libellés des motifs de perte adaptés au commerce togolais', () {
+      expect(PerteStock.libelleMotif('avarie'), 'Casse / Boîte abîmée');
+      expect(PerteStock.libelleMotif('perime'), 'Produit Périmé');
+      expect(PerteStock.libelleMotif('consommation'), 'Consommation interne');
+      expect(PerteStock.libelleMotif('vol_manquant'), 'Vol / Manquant');
+      expect(PerteStock.libelleMotif('inconnu'), 'Autre');
+    });
+
+    test('Fonctionnalité 4 : Modèle StatsPertes et agrégations financières', () {
+      const stats = StatsPertes(
+        totalPertes: 4,
+        totalQuantite: 15,
+        totalValeurAchat: 9500,
+        totalValeurVente: 12200,
+        repartitionParMotif: {
+          'avarie': 3500,
+          'perime': 4000,
+          'consommation': 2000,
+        },
+      );
+
+      expect(stats.totalPertes, 4);
+      expect(stats.totalQuantite, 15);
+      expect(stats.totalValeurAchat, 9500);
+      expect(stats.totalValeurVente, 12200);
+      expect(stats.repartitionParMotif['avarie'], 3500);
+      expect(stats.repartitionParMotif['perime'], 4000);
+      expect(stats.repartitionParMotif['consommation'], 2000);
+    });
   });
 }
+

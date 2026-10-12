@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 
 import '../data/models.dart';
 import '../data/repo.dart';
+import 'declarer_perte_dialog.dart';
 import 'helpers.dart';
 
 class ProduitsPage extends StatefulWidget {
@@ -91,6 +92,11 @@ class _ProduitsPageState extends State<ProduitsPage> {
     switch (a) {
       case 'entree':
         await _entreeRapide(p);
+      case 'perte':
+        await showDialog<void>(
+          context: context,
+          builder: (_) => DeclarerPerteDialog(produitInitial: p),
+        );
       case 'deconditionner':
         final nb = await demanderNombre(
           context,
@@ -170,6 +176,15 @@ class _ProduitsPageState extends State<ProduitsPage> {
               ),
             ],
           ),
+          OutlinedButton.icon(
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (_) => const DeclarerPerteDialog(),
+            ),
+            icon: const Icon(Icons.delete_sweep_rounded, size: 18, color: Color(0xFFDC2626)),
+            label: const Text('Déclarer perte', style: TextStyle(color: Color(0xFFDC2626))),
+          ),
+          const SizedBox(width: 8),
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: FilledButton.icon(
@@ -474,6 +489,16 @@ class _ProduitsPageState extends State<ProduitsPage> {
                         ],
                       ),
                     ),
+                  const PopupMenuItem(
+                    value: 'perte',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_sweep_rounded, size: 20, color: Color(0xFFDC2626)),
+                        SizedBox(width: 10),
+                        Text('Déclarer perte / avarie'),
+                      ],
+                    ),
+                  ),
                   const PopupMenuItem(
                     value: 'ajuster',
                     child: Row(

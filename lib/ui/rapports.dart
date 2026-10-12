@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,10 +10,11 @@ import 'package:share_plus/share_plus.dart';
 
 import '../data/models.dart';
 import '../data/repo.dart';
+import 'declarer_perte_dialog.dart';
 import 'helpers.dart';
 import 'ticket_service.dart';
 
-enum OngletRapport { activite, inventaire, statistiques }
+enum OngletRapport { activite, inventaire, statistiques, pertes }
 
 class RapportsPage extends StatefulWidget {
   const RapportsPage({super.key});
@@ -24,15 +26,18 @@ class RapportsPage extends StatefulWidget {
 class _RapportsPageState extends State<RapportsPage> {
   OngletRapport _onglet = OngletRapport.activite;
   String _filtreSi = '';
+  String _filtrePeriodePertes = 'mois';
+  String _filtreMotifPertes = 'tous';
 
-  Future<(RapportJour, int, List<Produit>, List<Vente>)> _chargerActivite(Repo repo) async {
+  Future<(RapportJour, int, List<Produit>, List<Vente>, StatsPertes)> _chargerActivite(Repo repo) async {
     final r = await repo.rapportDuJour();
     final c = await repo.totalCredits();
     final a = await repo.produitsEnAlerte();
     final now = DateTime.now();
     final debutJour = DateTime(now.year, now.month, now.day).toIso8601String();
     final v = await repo.ventes(dateDebut: debutJour, limit: 50);
-    return (r, c, a, v);
+    final p = await repo.statsPertes(dateDebut: debutJour);
+    return (r, c, a, v, p);
   }
 
   Future<void> _ouvrirCloture(BuildContext context, Repo repo) async {
@@ -204,6 +209,11 @@ class _RapportsPageState extends State<RapportsPage> {
                     icon: Icon(Icons.analytics_rounded, size: 18),
                     label: Text('Statistiques & Ventes'),
                   ),
+                  ButtonSegment(
+                    value: OngletRapport.pertes,
+                    icon: Icon(Icons.delete_sweep_rounded, size: 18),
+                    label: Text('Pertes & Avaries'),
+                  ),
                 ],
                 selected: {_onglet},
                 onSelectionChanged: (val) => setState(() => _onglet = val.first),
@@ -216,6 +226,7 @@ class _RapportsPageState extends State<RapportsPage> {
         OngletRapport.activite => _buildVueActivite(context, repo),
         OngletRapport.inventaire => _buildVueInventaire(context, repo),
         OngletRapport.statistiques => _buildVueStatistiques(context, repo),
+        OngletRapport.pertes => _buildVuePertes(context, repo),
       },
     );
   }
@@ -224,13 +235,14 @@ class _RapportsPageState extends State<RapportsPage> {
   // VUE 1 : ACTIVITÉ & CLÔTURE DU JOUR
   // =========================================================================
   Widget _buildVueActivite(BuildContext context, Repo repo) {
-    return FutureBuilder<(RapportJour, int, List<Produit>, List<Vente>)>(
+    return FutureBuilder<(RapportJour, int, List<Produit>, List<Vente>, StatsPertes)>(
       future: _chargerActivite(repo),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final (r, credits, alertes, ventes) = snap.data!;
+        final (r, credits, alertes, ventes, pertes) = snap.data!;
+        final margeNette = r.benefice - pertes.totalValeurAchat;
 
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -249,12 +261,22 @@ class _RapportsPageState extends State<RapportsPage> {
                     bgColor: const Color(0xFFF0FDF4),
                   ),
                   _StatCard(
-                    titre: 'Bénéfice estimé',
-                    valeur: fcfa(r.benefice),
-                    detail: 'Prix de vente − Prix d’achat',
+                    titre: 'Marge nette réelle',
+                    valeur: fcfa(margeNette),
+                    detail: pertes.totalValeurAchat > 0
+                        ? 'Brut : ${fcfa(r.benefice)} (-${fcfa(pertes.totalValeurAchat)} pertes)'
+                        : 'Bénéfice net (0 perte)',
                     icon: Icons.trending_up_rounded,
                     iconColor: const Color(0xFF0F766E),
                     bgColor: const Color(0xFFF0FDFA),
+                  ),
+                  _StatCard(
+                    titre: 'Pertes & Avaries',
+                    valeur: fcfa(pertes.totalValeurAchat),
+                    detail: pertes.totalPertes > 0 ? '${pertes.totalQuantite} article(s) perdu(s)' : 'Aucune perte déclarée',
+                    icon: Icons.delete_sweep_rounded,
+                    iconColor: const Color(0xFFDC2626),
+                    bgColor: const Color(0xFFFEF2F2),
                   ),
                   _StatCard(
                     titre: 'Crédits à recouvrer',
@@ -958,6 +980,418 @@ class _RapportsPageState extends State<RapportsPage> {
         );
       },
     );
+  }
+
+  // =========================================================================
+  // VUE 4 : PERTES, AVARIES & PRODUITS PÉRIMÉS
+  // =========================================================================
+  Widget _buildVuePertes(BuildContext context, Repo repo) {
+    DateTime? dateDebut;
+    final now = DateTime.now();
+    switch (_filtrePeriodePertes) {
+      case 'jour':
+        dateDebut = DateTime(now.year, now.month, now.day);
+      case 'semaine':
+        dateDebut = now.subtract(const Duration(days: 7));
+      case 'mois':
+        dateDebut = DateTime(now.year, now.month, 1);
+      case 'tout':
+        dateDebut = null;
+    }
+
+    final dateDebutIso = dateDebut?.toIso8601String();
+
+    return FutureBuilder<(List<PerteStock>, StatsPertes)>(
+      future: Future.wait([
+        repo.pertesStock(dateDebut: dateDebutIso, motif: _filtreMotifPertes),
+        repo.statsPertes(dateDebut: dateDebutIso),
+      ]).then((res) => (
+            res[0] as List<PerteStock>,
+            res[1] as StatsPertes,
+          )),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final (pertes, stats) = snap.data!;
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Entête et boutons d'action
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pertes, Avaries & Produits Périmés',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                    ),
+                    Text(
+                      'Marchandises dépréciées, cassées, périmées ou consommées',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                    ),
+                  ],
+                ),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: pertes.isEmpty ? null : () => _exporterPertesCsv(pertes),
+                      icon: const Icon(Icons.file_download_outlined, size: 18),
+                      label: const Text('Exporter CSV'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => const DeclarerPerteDialog(),
+                        );
+                        if (ok == true && mounted) setState(() {});
+                      },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC2626)),
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      label: const Text('Déclarer une perte'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Cartes Synthèse Financière des pertes
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 700;
+                final cards = [
+                  _StatCard(
+                    titre: 'Coût des Pertes (Achat)',
+                    valeur: fcfa(stats.totalValeurAchat),
+                    detail: 'Valeur nette déduite du bénéfice',
+                    icon: Icons.trending_down_rounded,
+                    iconColor: const Color(0xFFDC2626),
+                    bgColor: const Color(0xFFFEF2F2),
+                  ),
+                  _StatCard(
+                    titre: 'Manque à Gagner (Vente)',
+                    valeur: fcfa(stats.totalValeurVente),
+                    detail: 'Chiffre d’affaires théorique perdu',
+                    icon: Icons.money_off_rounded,
+                    iconColor: const Color(0xFFEA580C),
+                    bgColor: const Color(0xFFFFF7ED),
+                  ),
+                  _StatCard(
+                    titre: 'Articles Sortis',
+                    valeur: '${stats.totalQuantite}',
+                    detail: '${stats.totalPertes} déclaration(s) enregistrée(s)',
+                    icon: Icons.remove_shopping_cart_rounded,
+                    iconColor: const Color(0xFF7C3AED),
+                    bgColor: const Color(0xFFF5F3FF),
+                  ),
+                ];
+
+                if (isWide) {
+                  return Row(
+                    children: [
+                      for (int i = 0; i < cards.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 12),
+                        Expanded(child: cards[i]),
+                      ],
+                    ],
+                  );
+                }
+
+                return Column(
+                  children: [
+                    for (int i = 0; i < cards.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      cards[i],
+                    ],
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Filtres : Période et Motif
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('Période :', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
+                        const SizedBox(width: 8),
+                        Wrap(
+                          spacing: 6,
+                          children: [
+                            ChoiceChip(
+                              label: const Text('Ce mois'),
+                              selected: _filtrePeriodePertes == 'mois',
+                              onSelected: (s) {
+                                if (s) setState(() => _filtrePeriodePertes = 'mois');
+                              },
+                            ),
+                            ChoiceChip(
+                              label: const Text('7 derniers jours'),
+                              selected: _filtrePeriodePertes == 'semaine',
+                              onSelected: (s) {
+                                if (s) setState(() => _filtrePeriodePertes = 'semaine');
+                              },
+                            ),
+                            ChoiceChip(
+                              label: const Text('Aujourd’hui'),
+                              selected: _filtrePeriodePertes == 'jour',
+                              onSelected: (s) {
+                                if (s) setState(() => _filtrePeriodePertes = 'jour');
+                              },
+                            ),
+                            ChoiceChip(
+                              label: const Text('Toutes'),
+                              selected: _filtrePeriodePertes == 'tout',
+                              onSelected: (s) {
+                                if (s) setState(() => _filtrePeriodePertes = 'tout');
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Text('Motif :', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Wrap(
+                              spacing: 6,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('Tous'),
+                                  selected: _filtreMotifPertes == 'tous',
+                                  onSelected: (s) {
+                                    if (s) setState(() => _filtreMotifPertes = 'tous');
+                                  },
+                                ),
+                                ChoiceChip(
+                                  label: const Text('💥 Casse / Avarie'),
+                                  selected: _filtreMotifPertes == 'avarie',
+                                  onSelected: (s) {
+                                    if (s) setState(() => _filtreMotifPertes = 'avarie');
+                                  },
+                                ),
+                                ChoiceChip(
+                                  label: const Text('⏳ Périmé'),
+                                  selected: _filtreMotifPertes == 'perime',
+                                  onSelected: (s) {
+                                    if (s) setState(() => _filtreMotifPertes = 'perime');
+                                  },
+                                ),
+                                ChoiceChip(
+                                  label: const Text('🍴 Consommation interne'),
+                                  selected: _filtreMotifPertes == 'consommation',
+                                  onSelected: (s) {
+                                    if (s) setState(() => _filtreMotifPertes = 'consommation');
+                                  },
+                                ),
+                                ChoiceChip(
+                                  label: const Text('🚨 Vol / Manquant'),
+                                  selected: _filtreMotifPertes == 'vol_manquant',
+                                  onSelected: (s) {
+                                    if (s) setState(() => _filtreMotifPertes = 'vol_manquant');
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Liste des Pertes
+            if (pertes.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(40),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(Icons.check_circle_outline_rounded, size: 48, color: Color(0xFF16A34A)),
+                    SizedBox(height: 12),
+                    Text(
+                      'Aucune perte ou avarie enregistrée sur cette période',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: Color(0xFF0F172A)),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Vos marchandises sont intactes et aucun produit périmé n’a été déprécié.',
+                      style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Card(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: pertes.length,
+                  separatorBuilder: (context, index) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final p = pertes[i];
+                    DateTime? d;
+                    try {
+                      d = DateTime.parse(p.date);
+                    } catch (_) {}
+                    final dateStr = d != null ? DateFormat('dd/MM/yyyy HH:mm').format(d) : p.date;
+
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      leading: CircleAvatar(
+                        backgroundColor: _motifCouleurBg(p.motif),
+                        foregroundColor: _motifCouleurTexte(p.motif),
+                        child: Icon(_motifIcone(p.motif), size: 20),
+                      ),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              p.produitNom,
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            '- ${fcfa(p.valeurAchat)}',
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFFDC2626)),
+                          ),
+                        ],
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: _motifCouleurBg(p.motif),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  p.motifLibelle,
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _motifCouleurTexte(p.motif)),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${p.quantite} ${p.produitUnite}(s) • Perte CA : ${fcfa(p.valeurVente)}',
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                              ),
+                              const Spacer(),
+                              Text(dateStr, style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
+                            ],
+                          ),
+                          if (p.commentaire.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Motif : ${p.commentaire}${p.auteur.isNotEmpty ? " (par ${p.auteur})" : ""}',
+                              style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Color(0xFF64748B)),
+                            ),
+                          ],
+                        ],
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.undo_rounded, size: 20, color: Color(0xFF64748B)),
+                        tooltip: 'Annuler et réintégrer au stock',
+                        onPressed: () async {
+                          final ok = await confirmer(
+                            context,
+                            'Voulez-vous annuler cette perte de ${p.quantite} ${p.produitUnite}(s) et réintégrer la quantité au stock de « ${p.produitNom} » ?',
+                            oui: 'Réintégrer',
+                          );
+                          if (ok && context.mounted) {
+                            await repo.annulerPerte(p.id!);
+                            if (context.mounted) {
+                              message(context, '✓ Perte annulée : +${p.quantite} réintégrée(s) au stock');
+                              setState(() {});
+                            }
+                          }
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _exporterPertesCsv(List<PerteStock> pertes) async {
+    final sb = StringBuffer();
+    sb.writeln('Date;Article;Quantité;Unité;Motif;Coût Achat (F CFA);Valeur Vente (F CFA);Auteur;Observations');
+    for (final p in pertes) {
+      sb.writeln(
+        '${p.date};"${p.produitNom.replaceAll('"', '""')}";${p.quantite};"${p.produitUnite}";"${p.motifLibelle}";${p.valeurAchat};${p.valeurVente};"${p.auteur}";"${p.commentaire.replaceAll('"', '""')}"',
+      );
+    }
+    final bytes = Uint8List.fromList(utf8.encode(sb.toString()));
+    final nomFichier = 'pertes_avaries_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.csv';
+    await exporterFichierRobuste(
+      context: context,
+      nomFichier: nomFichier,
+      bytes: bytes,
+      titreDialogue: 'Exporter le registre des pertes et avaries',
+    );
+  }
+
+  IconData _motifIcone(String m) {
+    switch (m) {
+      case 'avarie': return Icons.broken_image_rounded;
+      case 'perime': return Icons.event_busy_rounded;
+      case 'consommation': return Icons.restaurant_rounded;
+      case 'vol_manquant': return Icons.report_problem_rounded;
+      default: return Icons.delete_outline_rounded;
+    }
+  }
+
+  Color _motifCouleurBg(String m) {
+    switch (m) {
+      case 'avarie': return const Color(0xFFFEF2F2);
+      case 'perime': return const Color(0xFFFFF1F2);
+      case 'consommation': return const Color(0xFFEFF6FF);
+      case 'vol_manquant': return const Color(0xFFFAF5FF);
+      default: return const Color(0xFFF1F5F9);
+    }
+  }
+
+  Color _motifCouleurTexte(String m) {
+    switch (m) {
+      case 'avarie': return const Color(0xFFDC2626);
+      case 'perime': return const Color(0xFFE11D48);
+      case 'consommation': return const Color(0xFF2563EB);
+      case 'vol_manquant': return const Color(0xFF7C3AED);
+      default: return const Color(0xFF475569);
+    }
   }
 }
 

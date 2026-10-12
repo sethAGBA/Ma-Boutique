@@ -453,4 +453,92 @@ class StatGrosDetail {
   double get partGrosPct => caTotal > 0 ? (caGros / caTotal) * 100 : 0.0;
 }
 
+/// Modèle pour les pertes, avaries, périmés et consommations internes
+class PerteStock {
+  final int? id;
+  final int produitId;
+  final String produitNom;
+  final String produitUnite;
+  final int quantite;
+  final int valeurAchat;
+  final int valeurVente;
+  final String motif; // 'avarie', 'perime', 'consommation', 'vol_manquant', 'autre'
+  final String commentaire;
+  final String date;
+  final String auteur;
+
+  const PerteStock({
+    this.id,
+    required this.produitId,
+    this.produitNom = '',
+    this.produitUnite = 'pièce',
+    required this.quantite,
+    required this.valeurAchat,
+    required this.valeurVente,
+    required this.motif,
+    this.commentaire = '',
+    required this.date,
+    this.auteur = '',
+  });
+
+  static String libelleMotif(String motif) {
+    switch (motif) {
+      case 'avarie':
+        return 'Casse / Boîte abîmée';
+      case 'perime':
+        return 'Produit Périmé';
+      case 'consommation':
+        return 'Consommation interne';
+      case 'vol_manquant':
+        return 'Vol / Manquant';
+      default:
+        return 'Autre';
+    }
+  }
+
+  String get motifLibelle => libelleMotif(motif);
+
+  factory PerteStock.fromMap(Map<String, Object?> m) => PerteStock(
+        id: m['id'] as int?,
+        produitId: m['produit_id'] as int,
+        produitNom: (m['produit_nom'] as String?) ?? '',
+        produitUnite: (m['produit_unite'] as String?) ?? 'pièce',
+        quantite: m['quantite'] as int,
+        valeurAchat: (m['valeur_achat'] as int?) ?? 0,
+        valeurVente: (m['valeur_vente'] as int?) ?? 0,
+        motif: (m['motif'] as String?) ?? 'autre',
+        commentaire: (m['commentaire'] as String?) ?? '',
+        date: m['date'] as String,
+        auteur: (m['auteur'] as String?) ?? '',
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != null) 'id': id,
+        'produit_id': produitId,
+        'quantite': quantite,
+        'valeur_achat': valeurAchat,
+        'valeur_vente': valeurVente,
+        'motif': motif,
+        'commentaire': commentaire,
+        'date': date,
+        'auteur': auteur,
+      };
+}
+
+class StatsPertes {
+  final int totalPertes;
+  final int totalQuantite;
+  final int totalValeurAchat;
+  final int totalValeurVente;
+  final Map<String, int> repartitionParMotif;
+
+  const StatsPertes({
+    this.totalPertes = 0,
+    this.totalQuantite = 0,
+    this.totalValeurAchat = 0,
+    this.totalValeurVente = 0,
+    this.repartitionParMotif = const {},
+  });
+}
+
 

@@ -1078,5 +1078,185 @@ class Repo extends ChangeNotifier {
     await batch.commit(noResult: true);
     notifyListeners();
   }
+
+  // ----------------------------------------------------------- Pertes & Avaries
+
+  /// Enregistre une perte / avarie / produit périmé ou consommation interne.
+  /// Déduit immédiatement le stock dans une transaction atomique et enregistre le mouvement.
+  Future<int> enregistrerPerte({
+    required int produitId,
+    required int quantite,
+    required String motif, // 'avarie', 'perime', 'consommation', 'vol_manquant', 'autre'
+    String commentaire = '',
+    String? auteur,
+  }) async {
+    if (quantite <= 0) throw Exception('La quantité doit être supérieure à 0.');
+    final d = await _d;
+
+    return await d.transaction((txn) async {
+      // 1. Récupération du produit pour calculer le coût financier
+      final pRows = await txn.query('produits', where: 'id = ?', whereArgs: [produitId]);
+      if (pRows.isEmpty) throw Exception('Produit introuvable.');
+      final prod = Produit.fromMap(pRows.first);
+
+      final dateStr = DateTime.now().toIso8601String();
+      final nomAuteur = auteur ?? utilisateurActif?.nom ?? 'Gérant';
+      final valAchat = quantite * prod.prixAchat;
+      final valVente = quantite * prod.prixVente;
+
+      // 2. Enregistrement de la perte
+      final perteId = await txn.insert('pertes_stock', {
+        'produit_id': produitId,
+        'quantite': quantite,
+        'valeur_achat': valAchat,
+        'valeur_vente': valVente,
+        'motif': motif,
+        'commentaire': commentaire.trim(),
+        'date': dateStr,
+        'auteur': nomAuteur,
+      });
+
+      // 3. Déduction du stock physique
+      await txn.rawUpdate(
+        'UPDATE produits SET stock = stock - ? WHERE id = ?',
+        [quantite, produitId],
+      );
+
+      // 4. Mouvement de stock pour traçabilité
+      await txn.insert('mouvements_stock', {
+        'produit_id': produitId,
+        'type': 'perte_$motif',
+        'quantite': -quantite,
+        'date': dateStr,
+      });
+
+      return perteId;
+    }).then((id) {
+      notifyListeners();
+      return id;
+    });
+  }
+
+  /// Liste chronologique des pertes avec détails du produit
+  Future<List<PerteStock>> pertesStock({
+    String? dateDebut,
+    String? dateFin,
+    String? motif,
+    int limit = 100,
+  }) async {
+    final d = await _d;
+    final whereClauses = <String>[];
+    final whereArgs = <Object?>[];
+
+    if (dateDebut != null) {
+      whereClauses.add('p.date >= ?');
+      whereArgs.add(dateDebut);
+    }
+    if (dateFin != null) {
+      whereClauses.add('p.date <= ?');
+      whereArgs.add(dateFin);
+    }
+    if (motif != null && motif.isNotEmpty && motif != 'tous') {
+      whereClauses.add('p.motif = ?');
+      whereArgs.add(motif);
+    }
+
+    final whereSql = whereClauses.isNotEmpty ? 'WHERE ${whereClauses.join(' AND ')}' : '';
+
+    final rows = await d.rawQuery('''
+      SELECT 
+        p.*, 
+        prod.nom AS produit_nom,
+        prod.unite AS produit_unite
+      FROM pertes_stock p
+      JOIN produits prod ON prod.id = p.produit_id
+      $whereSql
+      ORDER BY p.date DESC
+      LIMIT ?
+    ''', [...whereArgs, limit]);
+
+    return rows.map(PerteStock.fromMap).toList();
+  }
+
+  /// Statistiques des pertes (coût d'achat total, valeur de vente perdue, par motif)
+  Future<StatsPertes> statsPertes({String? dateDebut, String? dateFin}) async {
+    final d = await _d;
+    final whereClauses = <String>[];
+    final whereArgs = <Object?>[];
+
+    if (dateDebut != null) {
+      whereClauses.add('date >= ?');
+      whereArgs.add(dateDebut);
+    }
+    if (dateFin != null) {
+      whereClauses.add('date <= ?');
+      whereArgs.add(dateFin);
+    }
+
+    final whereSql = whereClauses.isNotEmpty ? 'WHERE ${whereClauses.join(' AND ')}' : '';
+
+    final rows = await d.rawQuery('''
+      SELECT 
+        COUNT(*) AS total_nb,
+        COALESCE(SUM(quantite), 0) AS total_qte,
+        COALESCE(SUM(valeur_achat), 0) AS total_val_achat,
+        COALESCE(SUM(valeur_vente), 0) AS total_val_vente
+      FROM pertes_stock
+      $whereSql
+    ''', whereArgs);
+
+    final motifsRows = await d.rawQuery('''
+      SELECT 
+        motif, 
+        COALESCE(SUM(valeur_achat), 0) AS val_achat
+      FROM pertes_stock
+      $whereSql
+      GROUP BY motif
+    ''', whereArgs);
+
+    final mapMotifs = <String, int>{};
+    for (final r in motifsRows) {
+      final m = r['motif'] as String? ?? 'autre';
+      final v = (r['val_achat'] as int?) ?? 0;
+      mapMotifs[m] = v;
+    }
+
+    final first = rows.first;
+    return StatsPertes(
+      totalPertes: (first['total_nb'] as int?) ?? 0,
+      totalQuantite: (first['total_qte'] as int?) ?? 0,
+      totalValeurAchat: (first['total_val_achat'] as int?) ?? 0,
+      totalValeurVente: (first['total_val_vente'] as int?) ?? 0,
+      repartitionParMotif: mapMotifs,
+    );
+  }
+
+  /// Annulation d'une perte (réintègre la quantité au stock)
+  Future<void> annulerPerte(int perteId) async {
+    final d = await _d;
+    await d.transaction((txn) async {
+      final rows = await txn.query('pertes_stock', where: 'id = ?', whereArgs: [perteId]);
+      if (rows.isEmpty) return;
+      final p = PerteStock.fromMap(rows.first);
+
+      // Réintégrer le stock
+      await txn.rawUpdate(
+        'UPDATE produits SET stock = stock + ? WHERE id = ?',
+        [p.quantite, p.produitId],
+      );
+
+      // Mouvement d'annulation
+      await txn.insert('mouvements_stock', {
+        'produit_id': p.produitId,
+        'type': 'annulation_perte',
+        'quantite': p.quantite,
+        'date': DateTime.now().toIso8601String(),
+      });
+
+      // Supprimer l'enregistrement de perte
+      await txn.delete('pertes_stock', where: 'id = ?', whereArgs: [perteId]);
+    });
+    notifyListeners();
+  }
 }
 

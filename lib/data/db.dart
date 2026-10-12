@@ -30,7 +30,7 @@ class AppDb {
     final path = await dbPath;
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (d) async {
         await d.execute('PRAGMA foreign_keys = ON');
       },
@@ -74,6 +74,23 @@ class AppDb {
               ecart INTEGER NOT NULL DEFAULT 0,
               observations TEXT NOT NULL DEFAULT ''
             )''');
+        } catch (_) {}
+
+        // Table des pertes, avaries et produits périmés
+        try {
+          await d.execute('''
+            CREATE TABLE IF NOT EXISTS pertes_stock(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              produit_id INTEGER NOT NULL REFERENCES produits(id),
+              quantite INTEGER NOT NULL,
+              valeur_achat INTEGER NOT NULL DEFAULT 0,
+              valeur_vente INTEGER NOT NULL DEFAULT 0,
+              motif TEXT NOT NULL,
+              commentaire TEXT NOT NULL DEFAULT '',
+              date TEXT NOT NULL,
+              auteur TEXT NOT NULL DEFAULT ''
+            )''');
+          await d.execute('CREATE INDEX IF NOT EXISTS idx_pertes_date ON pertes_stock(date)');
         } catch (_) {}
       },
     );
@@ -157,6 +174,19 @@ class AppDb {
         cle TEXT PRIMARY KEY,
         valeur TEXT NOT NULL
       )''');
+    await d.execute('''
+      CREATE TABLE pertes_stock(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        produit_id INTEGER NOT NULL REFERENCES produits(id),
+        quantite INTEGER NOT NULL,
+        valeur_achat INTEGER NOT NULL DEFAULT 0,
+        valeur_vente INTEGER NOT NULL DEFAULT 0,
+        motif TEXT NOT NULL,
+        commentaire TEXT NOT NULL DEFAULT '',
+        date TEXT NOT NULL,
+        auteur TEXT NOT NULL DEFAULT ''
+      )''');
+    await d.execute('CREATE INDEX idx_pertes_date ON pertes_stock(date)');
 
     // Utilisateurs par défaut (codes PIN à 6 chiffres)
     await d.insert('utilisateurs', {'nom': 'Gérant', 'role': 'gerant', 'pin': '123456', 'actif': 1});
@@ -255,6 +285,21 @@ class AppDb {
         )''');
       await d.insert('parametres', {'cle': 'largeur_ticket', 'valeur': '80'}, conflictAlgorithm: ConflictAlgorithm.ignore);
       await d.insert('parametres', {'cle': 'ouvrir_tiroir', 'valeur': '0'}, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    if (oldVersion < 4) {
+      await d.execute('''
+        CREATE TABLE IF NOT EXISTS pertes_stock(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          produit_id INTEGER NOT NULL REFERENCES produits(id),
+          quantite INTEGER NOT NULL,
+          valeur_achat INTEGER NOT NULL DEFAULT 0,
+          valeur_vente INTEGER NOT NULL DEFAULT 0,
+          motif TEXT NOT NULL,
+          commentaire TEXT NOT NULL DEFAULT '',
+          date TEXT NOT NULL,
+          auteur TEXT NOT NULL DEFAULT ''
+        )''');
+      await d.execute('CREATE INDEX IF NOT EXISTS idx_pertes_date ON pertes_stock(date)');
     }
   }
 }
