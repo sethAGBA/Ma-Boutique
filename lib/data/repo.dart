@@ -698,7 +698,7 @@ class Repo extends ChangeNotifier {
     }
   }
 
-  /// Charge les 55+ articles types d'alimentations générales africaines.
+  /// Charge les 300+ articles types d'alimentations générales africaines.
   /// Si [ecraser] est vrai, remplace les stocks et prix par les valeurs modèles.
   Future<int> chargerCatalogueAfricain({bool ecraser = false}) async {
     final d = await _d;

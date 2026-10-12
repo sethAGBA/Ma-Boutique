@@ -162,8 +162,8 @@ class _ParametresPageState extends State<ParametresPage> {
     final ok = await confirmer(
       context,
       ecraser
-          ? 'Cette action va réinitialiser les 55+ articles types du catalogue avec leurs prix d’achat, vente et gros conseillés.\nContinuer ?'
-          : 'Ajouter les 55+ articles d’alimentation générale africaine manquants au catalogue actuel ?',
+          ? 'Cette action va réinitialiser les 300+ articles types du catalogue avec leurs prix d’achat, vente et gros conseillés.\nContinuer ?'
+          : 'Ajouter les 300+ articles d’alimentation générale africaine (Riz, Tomates, Laits, Pâtes, Sardines, Savons...) manquants au catalogue actuel ?',
       oui: ecraser ? 'Réinitialiser' : 'Ajouter les articles',
     );
     if (!ok || !mounted) return;
@@ -527,7 +527,7 @@ class _ParametresPageState extends State<ParametresPage> {
 
                 const SizedBox(height: 20),
 
-                // 3. Catalogue Africain Pré-rempli (55+ articles)
+                // 3. Catalogue Africain Pré-rempli (300+ articles)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(20),
@@ -548,15 +548,15 @@ class _ParametresPageState extends State<ParametresPage> {
                             const Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Catalogue Alimentation Générale Africaine', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                                Text('Plus de 55 articles modèles avec prix d’achat, vente détail et prix de gros en F CFA', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                                Text('Catalogue Alimentation Générale Africaine (300+ Articles)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                                Text('Plus de 300 articles modèles avec prix d’achat, vente détail et prix de gros en F CFA', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                               ],
                             ),
                           ],
                         ),
                         const SizedBox(height: 14),
                         const Text(
-                          'Contient tous les incontournables : Riz parfumé 25kg, Huile Dinor, Pâtes Maman, Lait Bonnet Rouge, Nido, Sucre St Louis, Cubes Maggi, Sardines Titus, Boissons, Savons BF, etc.',
+                          'Contient tous les essentiels réels : Riz 50kg/25kg/5kg/1kg (Dinor, Thaï, Champion), Tomates (Gino, Salsa, Pommy, boîtes 70g à 2.2kg, sachets), Laits (Bonnet Rouge, Nido, Cowbell, concentré sucré & évaporé), Pâtes & Couscous (Bonita, Garden, Madina, Panzani), Huiles (5L, 1L, 20L, Palme rouge), Sardines (Lucina, Titus), Chocolat Milo (Grand & Petit), Sucres Carreaux, Savons (Le Cygne, Blanco, Medicated, Kira, Flash, Belair), Voltic, Javel, etc.',
                           style: TextStyle(fontSize: 13, height: 1.4, color: Color(0xFF475569)),
                         ),
                         const SizedBox(height: 16),
@@ -567,7 +567,7 @@ class _ParametresPageState extends State<ParametresPage> {
                             FilledButton.icon(
                               onPressed: () => _rechargerCatalogue(false),
                               icon: const Icon(Icons.add_shopping_cart_rounded, size: 18),
-                              label: const Text('Compléter avec les 55+ articles types'),
+                              label: const Text('Compléter avec les 300+ articles types'),
                             ),
                             OutlinedButton.icon(
                               onPressed: () => _rechargerCatalogue(true),
